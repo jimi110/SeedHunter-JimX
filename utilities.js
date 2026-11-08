@@ -67,3 +67,21 @@ export function downloadText(filename, text) {
   a.href = url; a.download = filename; document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
+
+/**
+ * Redibuja un panel SIN parpadeos: construye el contenido nuevo fuera de pantalla, lo intercambia de una vez y conserva
+ * los <details> abiertos y el scroll de las tablas. Si el usuario esta escribiendo o tiene un desplegable abierto dentro
+ * del panel, no lo toca (devuelve false) para no cerrarlo ni perder lo escrito.
+ */
+export function softRender(root, build) {
+  const ae = document.activeElement;
+  if (ae && root.contains(ae) && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) return false;
+  const opens = [...root.querySelectorAll('details')].map((d) => d.open);
+  const wraps = [...root.querySelectorAll('.table-wrap')].map((e) => [e.scrollLeft, e.scrollTop]);
+  const tmp = document.createElement('div');
+  build(tmp);
+  root.replaceChildren(...[...tmp.childNodes]);
+  root.querySelectorAll('details').forEach((d, i) => { if (opens[i]) d.open = true; });
+  root.querySelectorAll('.table-wrap').forEach((e, i) => { if (wraps[i]) { e.scrollLeft = wraps[i][0]; e.scrollTop = wraps[i][1]; } });
+  return true;
+}

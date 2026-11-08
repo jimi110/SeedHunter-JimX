@@ -1,5 +1,5 @@
 // SeedHunter Jimx — interfaz principal. Sin persistencia: todo el estado vive en memoria (app-state.js).
-import { h, fmtInt, fmtNum, fmtTime, parseSeed, seedToString } from './utilities.js';
+import { h, fmtInt, fmtNum, fmtTime, parseSeed, seedToString, softRender } from './utilities.js';
 import { state, collectLeaves, validateRules, defaultRules } from './app-state.js';
 import { EDITIONS, VERSIONS, VERSION_NOTICE, versionById } from './minecraft-versions.js';
 import { SEARCH_MODES, PERFORMANCE_PROFILES, ACCENTS, UI_SIZES, WASM_FILES } from './configuration.js';
@@ -7,7 +7,7 @@ import { WasmEngine } from './wasm-engine.js';
 import { detectCpu, planWorkers } from './cpu-engine.js';
 import { detectGpu } from './gpu-engine.js';
 import { SearchController, MapWorker } from './search-controller.js';
-import { compileRules, LEAF_TYPES } from './search-engine.js';
+import { compileRules, LEAF_TYPES, spawnBound, TURBO_DEFAULT_SLACK } from './search-engine.js';
 import { renderRules } from './ui-rules.js';
 import { renderResults, renderHunter } from './ui-results.js';
 import { openAnalysis } from './ui-analysis.js';
@@ -40,7 +40,7 @@ const btnContent = (name, label) => [icon(name, 18), h('span', { class: 'lbl', t
 
 // ---------- control de busqueda ----------
 const controller = new SearchController({
-  onState: (st) => { updateButtons(); renderStats(controller.snapshot()); if (st === 'finished' || st === 'cancelled') { clearTimeout(renderTimer); renderTimer = null; flushRender(); } },
+  onState: (st) => { updateButtons(); renderStats(controller.snapshot(), true); if (st === 'finished' || st === 'cancelled') { clearTimeout(renderTimer); renderTimer = null; flushRender(); } },
   onProgress: (snap) => { state.searchSnapshot = { ...snap, calib: controller.stats.calib }; renderStats(snap); scheduleRender(); },
   onMatches: (ms) => { state.matches.push(...ms); scheduleRender(); },
   onCheckpoint: (snap) => { toast(`Primer análisis completado (${fmtInt(snap.examined)} semillas): ${snap.matches} coincidencia(s). La búsqueda continúa.`); },
@@ -94,8 +94,10 @@ async function launch({ choice, analysis, compiled, rulesJson, domain, plan }) {
     state.lastRun = { versionId: state.versionId, versionLabel: versionById(state.versionId).label, mode: state.mode, domain: dom, name: choice.name, choice, pre: { est: analysis.est, tier: analysis.tier, verdict: analysis.verdict, source: analysis.source },
       leaves: compiled.leaves.map((l) => { const c = { ...l }; delete c._set; return c; }), plan };
     const hasLimit = domain.kind === 'random' && choice.maxSeeds;
+    const turbo = state.turbo ? { slack: Math.max(0, Number(state.turboSlack) || TURBO_DEFAULT_SLACK) } : null;
+    state.lastRun.turbo = turbo;
     await controller.start({ mc: state.versionId, large: state.large, rules: rulesJson, mode: state.mode, domain: dom, workers: plan.workers, wasmUrl: plan.wasmUrl,
-      calibEvery: Number(state.calibEvery) || 25, maxMatches: choice.maxMatches || null, maxSeeds: hasLimit ? choice.maxSeeds : null, maxTimeMs: choice.maxTimeMs,
+      calibEvery: Number(state.calibEvery) || 25, turbo, maxMatches: choice.maxMatches || null, maxSeeds: hasLimit ? choice.maxSeeds : null, maxTimeMs: choice.maxTimeMs,
       checkpointSeeds: choice.checkpoint && choice.checkpoint < (choice.maxSeeds || Infinity) ? choice.checkpoint : 0 });
     if (!reduceMotion()) { const c = document.querySelector('.controlbar'); c.classList.remove('burst'); void c.offsetWidth; c.classList.add('burst'); }
     switchTab('results');
@@ -109,33 +111,62 @@ function updateButtons() {
   $('bar').classList.toggle('live', s === 'running' && !reduceMotion());
 }
 const STOP_TEXT = { matches: 'Se alcanzó el número de resultados pedido.', time: 'Se alcanzó el tiempo máximo.', budget: 'Se completó el presupuesto de semillas.', condition: 'Se cumplió la condición de parada.', manual: 'Detenida manualmente; los resultados parciales se conservan.' };
-function renderStats(snap) {
+// Estadisticas: los elementos se crean UNA vez y solo se cambia su texto cuando cambia (sin reconstruir el DOM => sin parpadeos).
+const STAT_KEYS = ['Estado', 'Examinadas', 'Válidas', 'Descartadas', 'Prefiltradas (Turbo)', 'Velocidad', 'Tiempo', 'Restante', 'Carga CPU (workers)', 'Motor', 'GPU'];
+const statEls = {}; let statsMsg = null, lastStatsDraw = 0;
+function buildStats() {
+  const box = $('stats'); box.replaceChildren();
+  for (const k of STAT_KEYS) { const v = h('span', { class: 'v' }); const cell = h('div', { class: 'stat' }, h('span', { class: 'k', text: k }), v); statEls[k] = { cell, v }; box.append(cell); }
+  statsMsg = h('div', { class: 'stat wide' }, h('span', { class: 'v small-text' })); statsMsg.style.display = 'none'; box.append(statsMsg);
+}
+const setText = (el, t) => { if (el.textContent === t) return; const n = el.firstChild; if (n && n.nodeType === 3 && !n.nextSibling) n.nodeValue = t; else el.textContent = t; };
+function renderStats(snap, force = false) {
+  const now = performance.now();
+  if (!force && now - lastStatsDraw < 200) return;      // como mucho ~5 redibujados por segundo
+  lastStatsDraw = now;
+  if (!statsMsg) buildStats();
   const run = state.lastRun, total = snap.total, pct = total ? Math.min(100, (100 * snap.examined) / total) : 0;
-  $('bar').style.width = (total ? pct : snap.state === 'running' ? 100 : snap.state === 'finished' ? 100 : 0) + '%';
+  const barW = (total ? pct : snap.state === 'running' ? 100 : snap.state === 'finished' ? 100 : 0) + '%';
+  if ($('bar').style.width !== barW) $('bar').style.width = barW;
   $('bar').classList.toggle('indet', !total && snap.state === 'running');
   const mk = $('bar-mark'), cp = run?.choice?.checkpoint;
   mk.hidden = !(total && cp && cp < total); if (!mk.hidden) mk.style.left = (100 * cp / total) + '%';
   const lab = { idle: 'En espera', running: 'Buscando', paused: 'En pausa', finished: 'Terminada', cancelled: 'Cancelada' }[snap.state] || snap.state;
-  const cell = (k, v) => h('div', { class: 'stat' }, h('span', { class: 'k', text: k }), h('span', { class: 'v', text: v }));
   const live = snap.state === 'running';
-  $('stats').replaceChildren(cell('Estado', lab), cell('Examinadas', fmtInt(snap.examined) + (total ? ` / ${fmtInt(total)}` : '')), cell('Válidas', fmtInt(snap.matches)), cell('Descartadas', fmtInt(snap.discarded ?? 0)),
-    cell('Velocidad', fmtNum(snap.speed, 0) + ' seeds/s'), cell('Tiempo', fmtTime(snap.elapsedMs)),
-    cell('Restante', live || snap.state === 'paused' ? (snap.etaMs !== null && snap.etaMs !== undefined ? '≈ ' + fmtDuration(snap.etaMs / 1000) : 'sin límite') : '—'),
-    cell('Carga CPU (workers)', snap.load !== null && snap.load !== undefined ? fmtNum(snap.load * 100, 0) + ' %' : '—'),
-    cell('Motor', (snap.workers || run?.plan?.workers) ? `CPU · ${snap.workers || run.plan.workers} worker(s) · WASM${run?.plan?.simd ? '+SIMD' : ''}` : '—'), cell('GPU', gpu?.supported ? 'detectada, sin uso en worldgen' : 'no disponible'));
-  const d = snap.domain;
+  const vals = {
+    'Estado': lab, 'Examinadas': fmtInt(snap.examined) + (total ? ` / ${fmtInt(total)}` : ''), 'Válidas': fmtInt(snap.matches), 'Descartadas': fmtInt(snap.discarded ?? 0),
+    'Prefiltradas (Turbo)': run?.turbo ? `${fmtInt(snap.prefiltered || 0)}${snap.examined ? ` (${fmtNum((100 * (snap.prefiltered || 0)) / snap.examined, 0)} %)` : ''}` : '—',
+    'Velocidad': fmtNum(snap.speed, 0) + ' seeds/s', 'Tiempo': fmtTime(snap.elapsedMs),
+    'Restante': live || snap.state === 'paused' ? (snap.etaMs !== null && snap.etaMs !== undefined ? '≈ ' + fmtDuration(snap.etaMs / 1000) : 'sin límite') : '—',
+    'Carga CPU (workers)': snap.load !== null && snap.load !== undefined ? fmtNum(snap.load * 100, 0) + ' %' : '—',
+    'Motor': (snap.workers || run?.plan?.workers) ? `CPU · ${snap.workers || run.plan.workers} worker(s) · WASM${run?.plan?.simd ? '+SIMD' : ''}` : '—',
+    'GPU': gpu?.supported ? 'detectada, sin uso en worldgen' : 'no disponible',
+  };
+  for (const k of STAT_KEYS) setText(statEls[k].v, vals[k]);
+  statEls['Prefiltradas (Turbo)'].cell.style.display = run?.turbo ? '' : 'none';
+  const d = snap.domain; let msg = '';
   if ((snap.state === 'finished' || snap.state === 'cancelled') && run) {
     const msgs = [];
     if (snap.stopReason && STOP_TEXT[snap.stopReason]) msgs.push(STOP_TEXT[snap.stopReason] + (snap.stopReason === 'matches' && run.choice?.maxMatches && snap.matches > run.choice.maxMatches ? ` Se conservan las ${fmtInt(snap.matches)} encontradas (el lote en curso se completa para no sesgar la estadística).` : ''));
     if (d) msgs.push(d.kind === 'range' ? `Se examinó el intervalo [${d.start}, ${d.end}] (no todo el universo de semillas).` : d.kind === 'random' ? `Se examinó una muestra aleatoria de ${fmtInt(snap.examined)} semillas (no todas).` : 'Se examinó la lista manual indicada.');
+    if (run.turbo) msgs.push(`Turbo activo (margen ${fmtInt(run.turbo.slack)} bloques): puede haberse omitido alguna semilla válida cuyo spawn quede más lejos del origen que el margen.`);
     if (snap.matches === 0 && snap.examined > 0) { const v = postSearchVerdict(snap.examined); msgs.push(`${v.label}: ${v.detail}`); }
-    $('stats').append(h('div', { class: 'stat wide' }, h('span', { class: 'v small-text', text: msgs.join(' ') })));
+    msg = msgs.join(' ');
   }
+  statsMsg.style.display = msg ? '' : 'none'; setText(statsMsg.firstChild, msg);
 }
 
-let renderTimer = null;
-function flushRender() { if (currentTab === 'results') renderResults($('tab-results'), uiCtx); if (currentTab === 'hunter') renderHunter($('tab-hunter'), uiCtx); if (currentTab === 'perf') renderPerf(); }
-function scheduleRender() { if (renderTimer) return; renderTimer = setTimeout(() => { renderTimer = null; flushRender(); }, 400); }
+let renderTimer = null, lastFlushMs = 0;
+// Redibujado de pestanas durante la busqueda: sin parpadeos (resultados por diferencias; Hunter y Rendimiento con softRender)
+// y con una cadencia que se adapta a lo que cuesta dibujar (nunca mas de 1 de cada ~5 ms de trabajo).
+function flushRender() {
+  const t0 = performance.now();
+  if (currentTab === 'results') renderResults($('tab-results'), uiCtx);
+  if (currentTab === 'hunter') softRender($('tab-hunter'), (r) => renderHunter(r, uiCtx));
+  if (currentTab === 'perf') softRender($('tab-perf'), (r) => renderPerf(r));
+  lastFlushMs = performance.now() - t0;
+}
+function scheduleRender() { if (renderTimer) return; renderTimer = setTimeout(() => { renderTimer = null; flushRender(); }, Math.min(3000, Math.max(400, lastFlushMs * 5))); }
 
 // ---------- pestanas ----------
 function switchTab(id) {
@@ -158,6 +189,20 @@ const uiCtx = {
   openMap: (seed) => { state.mapSeed = String(seed); switchTab('map'); },
   exportCtx: () => ({ edition: EDITIONS.find((e) => e.id === state.edition).label, versionLabel: versionById(state.lastRun?.versionId ?? state.versionId).label, modeLabel: SEARCH_MODES[state.lastRun?.mode ?? state.mode].label, leaves: state.lastRun?.leaves || [] }),
 };
+
+// ---------- Turbo ----------
+function turboCard() {
+  const bound = spawnBound(state.versionId), exact = Number.isFinite(bound) && Number(state.turboSlack) >= bound;
+  return h('div', { class: 'card' }, h('h2', { text: 'Turbo (opcional)' }),
+    h('label', { class: 'inline' }, h('input', { type: 'checkbox', checked: state.turbo, on: { change: (e) => { state.turbo = e.target.checked; renderSearch(); } } }), ' Activar Turbo'),
+    h('div', { class: 'fields' }, h('label', { class: 'field' }, h('span', { text: 'Margen del spawn respecto al origen (bloques)' }),
+      h('input', { type: 'number', min: 0, max: 6000, step: 100, value: state.turboSlack, style: 'width:min(100%,120px)', on: { input: (e) => { state.turboSlack = e.target.value; }, change: () => renderSearch() } }))),
+    h('p', { class: 'muted small-text', text: 'El spawn cuesta ≈ 4 ms por semilla y es casi todo el tiempo de una semilla. Con Turbo, antes de calcularlo se comprueba si hay alguna estructura viable a ≤ radio + margen del origen; si no la hay, la semilla se descarta sin calcular el spawn. Solo afecta a condiciones de estructura «desde el spawn» en modos Normal y Avanzado. Los resultados nunca son falsos (lo que cumple, cumple); lo único que puede perderse es una semilla válida cuyo spawn quede más lejos del origen que el margen.' }),
+    h('p', { class: 'small-text', text: Number.isFinite(bound)
+      ? (exact ? `Con margen ≥ ${bound} Turbo es exacto en esta versión (cota teórica del spawn), pero acelera menos.` : `Cota teórica del spawn en esta versión: ${bound} bloques (con ese margen Turbo sería exacto). Con ${fmtInt(Number(state.turboSlack) || 0)} es aproximado: en 4.500 spawns medidos el máximo fue 987 bloques del origen.`)
+      : 'En esta versión el spawn no tiene cota teórica: Turbo es siempre aproximado.' }),
+    h('p', { class: 'muted small-text', text: 'El análisis previo (piloto) se mide siempre sin Turbo, así que la rareza estimada es exacta; el Turbo solo acelera la búsqueda posterior.' }));
+}
 
 // ---------- Busqueda ----------
 function renderSearch() {
@@ -187,12 +232,13 @@ function renderSearch() {
         h('label', { class: 'field' }, h('span', { text: 'Parar tras N coincidencias (vacío = lo decides en el análisis previo)' }), h('input', { type: 'number', min: 1, inputmode: 'numeric', value: state.maxMatches, style: 'width:min(100%,120px)', on: { input: (e) => { state.maxMatches = e.target.value; } } })),
         h('label', { class: 'field' }, h('span', { text: 'Calibración: evaluar todas las condiciones cada N semillas' }), h('input', { type: 'number', min: 1, inputmode: 'numeric', value: state.calibEvery, style: 'width:min(100%,90px)', on: { input: (e) => { state.calibEvery = e.target.value; } } }))),
       h('p', { class: 'muted small-text', text: 'Al pulsar «Iniciar» se abre un análisis previo que mide en tu equipo la rareza y la velocidad, y propone un presupuesto editable. Nada empieza hasta que lo confirmes.' })),
+    turboCard(),
     h('div', { class: 'card' }, h('h2', { text: 'Condiciones activas' }), h('ul', {}, collectLeaves(state.rules).filter((l) => l.enabled !== false).map((l) => h('li', { text: describeLeaf(l) + (l.optional ? ' (opcional)' : '') }))), h('button', { class: 'btn small', on: { click: () => switchTab('rules') } }, icon('rules', 16), h('span', { class: 'lbl', text: 'Editar reglas' }))));
 }
 
 // ---------- Rendimiento ----------
-function renderPerf() {
-  const root = $('tab-perf'); root.replaceChildren();
+function renderPerf(root = $('tab-perf')) {
+  root.replaceChildren();
   const plan = planWorkers(state.profile, state.workersOverride, cpu), snap = controller.snapshot();
   const row = (k, v) => h('tr', {}, h('th', { text: k }), h('td', { text: v }));
   const stages = snap.stages || [], labels = state.lastRun?.leaves || [];
@@ -215,6 +261,7 @@ function renderPerf() {
       h('p', { class: 'muted small-text', text: 'La carga mostrada es el tiempo ocupado real medido de los workers; el navegador no expone el uso de CPU del sistema ni el de GPU.' })),
     h('div', { class: 'card' }, h('h2', { text: 'Medidas reales de la búsqueda actual' }),
       h('p', { text: `Velocidad: ${fmtNum(snap.speed, 0)} seeds/s (media ${fmtNum(snap.avgSpeed, 0)}) · Examinadas: ${fmtInt(snap.examined)} · Descartadas: ${fmtInt(snap.discarded ?? 0)} · Válidas: ${fmtInt(snap.matches)} · Carga de workers: ${snap.load !== null && snap.load !== undefined ? fmtNum(snap.load * 100, 0) + ' %' : '—'}` }),
+      state.lastRun?.turbo ? h('p', { class: 'muted small-text', text: `Turbo activo: ${fmtInt(snap.prefiltered || 0)} semillas se descartaron antes de calcular el spawn y no cuentan en las cifras por etapa (que describen solo las semillas que pasaron el prefiltro).` }) : null,
       stages.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'tbl compact stack' }, h('thead', {}, h('tr', {}, ['Etapa del filtro', 'Llegaron', 'Pasaron', 'Tiempo total', 'Semillas/s de la etapa'].map((t) => h('th', { text: t })))),
         h('tbody', {}, stages.map((s, i) => h('tr', {}, h('td', { 'data-label': 'Etapa', text: `${i + 1}. ${labels[i] ? describeLeaf(labels[i]) : 'condición'}` }), h('td', { 'data-label': 'Llegaron', text: fmtInt(s.n) }), h('td', { 'data-label': 'Pasaron', text: fmtInt(s.k) }), h('td', { 'data-label': 'Tiempo', text: fmtNum(s.ms / 1000, 2) + ' s' }), h('td', { 'data-label': 'Semillas/s', text: s.ms > 0 ? fmtNum((s.n / s.ms) * 1000, 0) : '—' })))))) : h('p', { class: 'muted', text: 'Sin datos por etapa todavía. Inicia una búsqueda.' })));
 }
@@ -262,10 +309,10 @@ function renderSettings() {
         h('label', { class: 'field' }, h('span', { text: 'Tema' }), h('select', { id: 'sel-theme', on: { change: (e) => { state.theme = e.target.value; applyTheme(); } } }, ...[['dark', 'Oscuro'], ['light', 'Claro'], ['auto', 'Automático (sistema)']].map(([v, t]) => h('option', { value: v, selected: state.theme === v, text: t })))),
         h('label', { class: 'field' }, h('span', { text: 'Tamaño de interfaz' }), h('select', { on: { change: (e) => { state.uiSize = e.target.value; applyTheme(); } } }, ...Object.keys(UI_SIZES).map((k) => h('option', { value: k, selected: state.uiSize === k, text: { small: 'Pequeño', medium: 'Medio', large: 'Grande' }[k] })))),
         h('div', { class: 'field' }, h('span', { text: 'Color de acento' }), h('div', { class: 'swatches' }, ...ACCENTS.map((c) => h('button', { class: 'swatch' + (state.accent === c ? ' sel' : ''), style: `background:${c}`, 'aria-label': 'Acento ' + c, on: { click: () => { state.accent = c; applyTheme(); renderSettings(); } } }))))),
-      h('p', { class: 'muted small-text', text: 'Estas preferencias no se guardan: al recargar vuelven a los valores por defecto (por privacidad no se usa ningún almacenamiento del navegador).' })),
+      h('p', { class: 'muted small-text', text: 'Estas preferencias no se guardan: al recargar vuelven a los valores por defecto (por privacidad no se guarda ningún dato tuyo en el navegador).' })),
     h('div', { class: 'card' }, h('h2', { text: 'Privacidad' }), h('ul', {},
       ['Todo el cálculo ocurre en tu navegador (WebAssembly en Web Workers). No hay backend ni peticiones con datos tuyos.',
-        'No se usa localStorage, sessionStorage, IndexedDB ni cookies. Sin analítica ni telemetría. Sin cuentas.',
+        'No se usa localStorage, sessionStorage, IndexedDB ni cookies. Sin analítica ni telemetría. Sin cuentas. Si instalas la app, solo se guardan en caché los archivos de la propia app para abrirla sin conexión; nunca datos tuyos.',
         'Seeds, resultados, análisis, filtros y datos de hardware viven solo en memoria y desaparecen al cerrar o recargar.',
         'Solo conservas una seed si pulsas «Descargar TXT». La política CSP de la página bloquea conexiones a otros orígenes.'].map((t) => h('li', { text: t })))),
     h('div', { class: 'card' }, h('h2', { text: 'Límites y funciones pendientes (sin simular)' }), h('ul', {}, [
@@ -309,13 +356,13 @@ async function init() {
   $('btn-pause').addEventListener('click', () => controller.pause());
   $('btn-resume').addEventListener('click', () => controller.resume());
   $('btn-cancel').addEventListener('click', () => controller.cancel());
-  $('btn-restart').addEventListener('click', () => { controller.cancel(true); controller.state = 'idle'; clearResults(); state.rules = defaultRules(); renderStats(controller.snapshot()); updateButtons(); toast('Reiniciado'); });
+  $('btn-restart').addEventListener('click', () => { controller.cancel(true); controller.state = 'idle'; clearResults(); state.rules = defaultRules(); renderStats(controller.snapshot(), true); updateButtons(); toast('Reiniciado'); });
   cpu = detectCpu();
   try {
     infoEngine = await WasmEngine.load(WASM_FILES.scalar); info.setVersion(state.versionId);
     $('engine-tag').textContent = `motor: Cubiomes/WASM${cpu.simd ? ' + SIMD' : ''} · ${cpu.coresKnown ? cpu.cores + ' núcleos' : 'núcleos n/d'}`;
   } catch (e) { $('engine-tag').textContent = 'motor: ERROR'; toast('No se pudo cargar el motor WebAssembly: ' + e.message); return; }
-  updateButtons(); renderStats(controller.snapshot()); switchTab('search');
-  detectGpu().then((g) => { gpu = g; if (currentTab === 'perf') renderPerf(); renderStats(controller.snapshot()); });
+  updateButtons(); renderStats(controller.snapshot(), true); switchTab('search');
+  detectGpu().then((g) => { gpu = g; if (currentTab === 'perf') renderPerf(); renderStats(controller.snapshot(), true); });
 }
 init();

@@ -54,43 +54,99 @@ export function ficha(card, m) {
     h('p', { class: 'muted small-text', text: `Loot/cofres: ${LOOT.reason} · Colisiones: ${COLLISION_LEVELS.piezas.reason}` }));
 }
 
+// ---- Resultados: actualizacion por diferencias (sin reconstruir la tabla => sin parpadeos, sin perder scroll/foco/seleccion) ----
+const setText = (el, t) => { if (el.textContent === t) return; const n = el.firstChild; if (n && n.nodeType === 3 && !n.nextSibling) n.nodeValue = t; else el.textContent = t; };
+
 export function renderResults(root, ctx) {
-  root.replaceChildren();
+  const ui = root._rr || (root._rr = buildResultsShell(root, ctx));
+  updateResults(ui, ctx);
+}
+
+function buildResultsShell(root, ctx) {
+  const ui = { rows: new Map(), list: [], cards: [], bySeed: new Map(), ths: {} };
+  const sel = state.selected, refresh = () => updateResults(ui, ctx);
+  const copy = (txt) => navigator.clipboard?.writeText(txt).then(() => ctx.toast('Copiado'), () => ctx.toast('No se pudo copiar'));
+  const targets = () => (sel.size ? ui.list.filter((c) => sel.has(c.seed)) : ui.list);
+  ui.input = h('input', { type: 'search', placeholder: 'Filtrar por seed o bioma…', value: state.filter, on: { input: (e) => { state.filter = e.target.value; refresh(); } } });
+  ui.count = h('span', { class: 'muted' });
+  ui.notice = h('div', { class: 'notice', text: 'Aún no hay resultados. Define reglas e inicia una búsqueda. Los resultados solo viven en memoria y desaparecen al recargar.' });
+  ui.tbody = h('tbody');
+  ui.selAll = h('input', { type: 'checkbox', 'aria-label': 'Seleccionar todo', on: { change: (e) => { ui.list.forEach((c) => (e.target.checked ? sel.add(c.seed) : sel.delete(c.seed))); refresh(); } } });
+  const th = (label, k) => { const el = h('th', { class: 'sortable', text: label, on: { click: () => { if (state.sortKey === k) state.sortDir *= -1; else { state.sortKey = k; state.sortDir = 1; } refresh(); } } }); ui.ths[k] = { el, label }; return el; };
+  const thead = h('thead', {}, h('tr', {}, h('th', {}, ui.selAll), th('Seed', 'seed'), th('Bioma spawn', 'biome'), th('Spawn estimado (X, Z)', 'dist'), h('th', { text: 'Resumen' }), th('Rareza', 'rare'), h('th', { text: 'Clase' }), h('th', { text: '' })));
+  root.replaceChildren(
+    h('div', { class: 'toolbar' }, ui.input, ui.count,
+      h('button', { class: 'btn small', text: 'Copiar seeds', on: { click: () => copy(targets().map((c) => c.seed).join('\n')) } }),
+      h('button', { class: 'btn small', text: 'Copiar coordenadas', on: { click: () => copy(targets().map((c) => { const m = ui.bySeed.get(c.seed); return `${c.seed}\tspawn X ${m.spawn.x} Z ${m.spawn.z}`; }).join('\n')) } }),
+      h('button', { class: 'btn small', text: 'Comparar selección', on: { click: () => ctx.goto('hunter') } }),
+      h('button', { class: 'btn small primary', text: 'Descargar TXT…', on: { click: () => exportDialog(ui.list, sel, ui.bySeed, ctx) } }),
+      h('button', { class: 'btn small danger', text: 'Limpiar resultados', on: { click: () => ctx.clearResults() } })),
+    ui.notice,
+    h('div', { class: 'table-wrap' }, h('table', { class: 'tbl stack' }, thead, ui.tbody)));
+  return ui;
+}
+
+function makeRow(ui, ctx, c, m) {
+  const r = { c, detail: null, fichaAt: 0, tier: undefined }, sel = state.selected;
+  const isNew = ctx.seen && !ctx.seen.has(c.seed); ctx.seen?.add(c.seed);
+  const cb = h('input', { type: 'checkbox', 'aria-label': 'Seleccionar ' + c.seed, on: { change: (e) => { e.target.checked ? sel.add(r.c.seed) : sel.delete(r.c.seed); updateResults(ui, ctx); } } });
+  const rare = h('td', { 'data-label': 'Rareza' }), cls = h('td', { 'data-label': 'Clase' }), sum = h('td', { class: 'small-text', 'data-label': 'Resumen' });
+  const btn = h('button', { class: 'btn tiny', on: { click: () => { ctx.open.has(r.c.seed) ? ctx.open.delete(r.c.seed) : ctx.open.add(r.c.seed); updateResults(ui, ctx); } } });
+  r.tr = h('tr', { class: isNew ? 'fresh' : '' },
+    h('td', { 'data-label': 'Seleccionar' }, cb), h('td', { class: 'mono', 'data-label': 'Seed', text: c.seed }), h('td', { 'data-label': 'Bioma spawn', text: biomeName(m.spawnBiome) }),
+    h('td', { class: 'mono', 'data-label': 'Spawn estimado', text: `${m.spawn.x}, ${m.spawn.z}` }), sum, rare, cls,
+    h('td', { 'data-label': 'Acciones' }, btn, ' ', h('button', { class: 'btn tiny', text: 'Mapa', on: { click: () => ctx.openMap(r.c.seed) } })));
+  Object.assign(r, { cb, rare, cls, sum, btn });
+  return r;
+}
+
+function updateRow(r, c, open, selected) {
+  r.c = c;
+  if (r.cb.checked !== selected) r.cb.checked = selected;
+  setText(r.rare, c.joint.none ? '—' : formatOneIn(c.joint.p));
+  const tl = c.tier ? c.tier.label : null;
+  if (tl !== r.tier) { r.tier = tl; r.cls.replaceChildren(badge(c.tier)); }
+  setText(r.sum, leafSummary(c));
+  setText(r.btn, open ? 'Ocultar' : 'Ficha');
+  r.tr.classList.toggle('open', open);
+}
+
+function updateResults(ui, ctx) {
+  const sel = state.selected;
   const cards = currentCards(), bySeed = new Map(state.matches.map((m) => [m.seed, m]));
   const filter = state.filter.trim().toLowerCase();
-  let list = cards.filter((c) => !filter || c.seed.includes(filter) || biomeName(bySeed.get(c.seed).spawnBiome).toLowerCase().includes(filter));
+  const list = cards.filter((c) => !filter || c.seed.includes(filter) || biomeName(bySeed.get(c.seed).spawnBiome).toLowerCase().includes(filter));
   const key = state.sortKey, dir = state.sortDir;
   const val = { seed: (c) => BigInt(c.seed), biome: (c) => bySeed.get(c.seed).spawnBiome, rare: (c) => c.rarestSingle ?? 2, dist: (c) => Math.hypot(bySeed.get(c.seed).spawn.x, bySeed.get(c.seed).spawn.z) }[key];
   list.sort((a, b) => (val(a) < val(b) ? -dir : val(a) > val(b) ? dir : 0));
+  ui.list = list; ui.cards = cards; ui.bySeed = bySeed;
 
-  const sel = state.selected;
-  const th = (label, k) => h('th', { class: 'sortable', text: label + (key === k ? (dir > 0 ? ' ▲' : ' ▼') : ''), on: { click: () => { if (state.sortKey === k) state.sortDir *= -1; else { state.sortKey = k; state.sortDir = 1; } renderResults(root, ctx); } } });
-  const targets = () => (sel.size ? list.filter((c) => sel.has(c.seed)) : list);
-  const copy = (txt) => navigator.clipboard?.writeText(txt).then(() => ctx.toast('Copiado'), () => ctx.toast('No se pudo copiar'));
+  for (const [k, { el, label }] of Object.entries(ui.ths)) setText(el, label + (key === k ? (dir > 0 ? ' ▲' : ' ▼') : ''));
+  setText(ui.count, `${fmtInt(list.length)} de ${fmtInt(cards.length)} resultados · ${fmtInt(sel.size)} seleccionados`);
+  ui.notice.style.display = cards.length ? 'none' : '';
+  const allSel = list.length > 0 && list.every((c) => sel.has(c.seed));
+  if (ui.selAll.checked !== allSel) ui.selAll.checked = allSel;
 
-  root.append(
-    h('div', { class: 'toolbar' },
-      h('input', { type: 'search', placeholder: 'Filtrar por seed o bioma…', value: state.filter, on: { input: (e) => { state.filter = e.target.value; renderResults(root, ctx); const i = root.querySelector('input[type=search]'); i.focus(); i.setSelectionRange(99, 99); } } }),
-      h('span', { class: 'muted', text: `${fmtInt(list.length)} de ${fmtInt(cards.length)} resultados · ${fmtInt(sel.size)} seleccionados` }),
-      h('button', { class: 'btn small', text: 'Copiar seeds', on: { click: () => copy(targets().map((c) => c.seed).join('\n')) } }),
-      h('button', { class: 'btn small', text: 'Copiar coordenadas', on: { click: () => copy(targets().map((c) => { const m = bySeed.get(c.seed); return `${c.seed}\tspawn X ${m.spawn.x} Z ${m.spawn.z}`; }).join('\n')) } }),
-      h('button', { class: 'btn small', text: 'Comparar selección', on: { click: () => ctx.goto('hunter') } }),
-      h('button', { class: 'btn small primary', text: 'Descargar TXT…', on: { click: () => exportDialog(list, sel, bySeed, ctx) } }),
-      h('button', { class: 'btn small danger', text: 'Limpiar resultados', on: { click: () => ctx.clearResults() } })),
-    cards.length ? null : h('div', { class: 'notice', text: 'Aún no hay resultados. Define reglas e inicia una búsqueda. Los resultados solo viven en memoria y desaparecen al recargar.' }),
-    h('div', { class: 'table-wrap' }, h('table', { class: 'tbl stack' },
-      h('thead', {}, h('tr', {}, h('th', {}, h('input', { type: 'checkbox', on: { change: (e) => { list.forEach((c) => (e.target.checked ? sel.add(c.seed) : sel.delete(c.seed))); renderResults(root, ctx); } } })), th('Seed', 'seed'), th('Bioma spawn', 'biome'), th('Spawn estimado (X, Z)', 'dist'), h('th', { text: 'Resumen' }), th('Rareza', 'rare'), h('th', { text: 'Clase' }), h('th', { text: '' }))),
-      h('tbody', {}, list.flatMap((c) => {
-        const m = bySeed.get(c.seed), open = ctx.open.has(c.seed);
-        const isNew = ctx.seen && !ctx.seen.has(c.seed); ctx.seen?.add(c.seed);
-        const tr = h('tr', { class: (open ? 'open ' : '') + (isNew ? 'fresh' : '') },
-          h('td', { 'data-label': 'Seleccionar' }, h('input', { type: 'checkbox', 'aria-label': 'Seleccionar ' + c.seed, checked: sel.has(c.seed), on: { change: (e) => { e.target.checked ? sel.add(c.seed) : sel.delete(c.seed); renderResults(root, ctx); } } })),
-          h('td', { class: 'mono', 'data-label': 'Seed', text: c.seed }), h('td', { 'data-label': 'Bioma spawn', text: biomeName(m.spawnBiome) }), h('td', { class: 'mono', 'data-label': 'Spawn estimado', text: `${m.spawn.x}, ${m.spawn.z}` }),
-          h('td', { class: 'small-text', 'data-label': 'Resumen', text: leafSummary(c) }),
-          h('td', { 'data-label': 'Rareza', text: c.joint.none ? '—' : formatOneIn(c.joint.p) }), h('td', { 'data-label': 'Clase' }, badge(c.tier)),
-          h('td', { 'data-label': 'Acciones' }, h('button', { class: 'btn tiny', text: open ? 'Ocultar' : 'Ficha', on: { click: () => { open ? ctx.open.delete(c.seed) : ctx.open.add(c.seed); renderResults(root, ctx); } } }), ' ', h('button', { class: 'btn tiny', text: 'Mapa', on: { click: () => ctx.openMap(c.seed) } })));
-        return open ? [tr, h('tr', { class: 'detail' }, h('td', { colspan: 8 }, ficha(c, m)))] : [tr];
-      })))));
+  // Reconciliacion: se eliminan las filas que ya no estan, se reutilizan las existentes y solo se mueve lo que cambia de sitio.
+  const want = new Set(list.map((c) => c.seed));
+  for (const [seed, r] of ui.rows) if (!want.has(seed)) { r.tr.remove(); r.detail?.remove(); ui.rows.delete(seed); }
+  const running = state.searchSnapshot?.state === 'running', now = performance.now();
+  let prev = null;
+  for (const c of list) {
+    const m = bySeed.get(c.seed), open = ctx.open.has(c.seed);
+    let r = ui.rows.get(c.seed);
+    if (!r) { r = makeRow(ui, ctx, c, m); ui.rows.set(c.seed, r); }
+    updateRow(r, c, open, sel.has(c.seed));
+    const expected = prev ? prev.nextSibling : ui.tbody.firstChild;
+    if (r.tr !== expected) ui.tbody.insertBefore(r.tr, expected);
+    prev = r.tr;
+    if (open) {
+      if (!r.detail) { r.detail = h('tr', { class: 'detail' }, h('td', { colspan: 8 })); r.fichaAt = 0; }
+      if (!r.detail.firstChild.firstChild || !running || now - r.fichaAt > 1500) { r.detail.firstChild.replaceChildren(ficha(c, m)); r.fichaAt = now; }
+      if (r.tr.nextSibling !== r.detail) ui.tbody.insertBefore(r.detail, r.tr.nextSibling);
+      prev = r.detail;
+    } else if (r.detail) { r.detail.remove(); r.detail = null; }
+  }
 }
 
 function exportDialog(list, sel, bySeed, ctx) {

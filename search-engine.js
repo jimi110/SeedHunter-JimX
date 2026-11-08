@@ -3,6 +3,7 @@
 import { SEARCH_MODES } from './configuration.js';
 import { structById, structByKey } from './structure-engine.js';
 import { dist } from './utilities.js';
+import { GAME_DATA } from './game-data.js';
 
 // Tipos de condicion. cost = orden aproximado de coste (menor primero); better: 'low' (menor valor = mas raro) | 'high'.
 export const LEAF_TYPES = {
@@ -18,6 +19,38 @@ export const LEAF_TYPES = {
 const TERRAIN_CHECK = new Set(['Desert_Pyramid', 'Jungle_Temple', 'Mansion'].map((k) => structByKey(k).id));
 
 const MAX_REGIONS = 40000;
+
+// ---- Turbo (opcional, aproximado) ----------------------------------------------------------------------------------
+// Calcular el spawn cuesta ~4 ms por semilla (1.18+), casi todo el tiempo de una semilla. Con Turbo, antes de calcularlo se
+// comprueba, de forma barata, si existe algun intento de estructura viable a <= radio + margen del ORIGEN. Si no existe,
+// la semilla se descarta sin calcular el spawn. Es exacto mientras el spawn real este a <= margen del origen.
+// spawnBound() da la cota teorica (lectura de getSpawn/estimateSpawn de Cubiomes): con margen >= cota, Turbo es exacto.
+const VID = (k) => GAME_DATA.versions.find(([, kk]) => kk === k)?.[0];
+export function spawnBound(mc) {
+  mc = Number(mc);
+  if (mc <= VID('MC_1_12_2')) return Infinity;      // paseo aleatorio sin cota teorica
+  if (mc <= VID('MC_1_17_1')) return 800;           // locateBiome (256) + espiral de +-16 chunks
+  return 2800;                                      // 1.18+: busqueda de 2048 + refinado de 512 + espiral de +-5 chunks
+}
+export const TURBO_DEFAULT_SLACK = 1000;            // en 4.500 spawns medidos (1.16, 1.18, 1.21) el maximo fue 987 bloques
+
+/** true => esta hoja NO puede cumplirse si |spawn| <= slack. Solo es una condicion necesaria (no mira terreno ni minDist). */
+function turboLeafRejects(ctx, leaf, slack) {
+  if (leaf.cond !== 'structure' || leaf.center !== 'spawn' || !ctx.mode.viability) return false;
+  const need = leaf.minCount ?? 1; if (need < 1) return false;
+  const sdef = structById(leaf.struct), cfg = sdef && ctx.cfg(sdef.id); if (!cfg) return false;
+  const R = leaf.radius + slack, rb = cfg.regionSize * 16;
+  const r0x = Math.floor(-R / rb), r1x = Math.floor(R / rb);
+  if ((r1x - r0x + 1) * (r1x - r0x + 1) > MAX_REGIONS) return false;
+  ctx.ensureDim(sdef.dim);
+  let got = 0;
+  for (let rz = r0x; rz <= r1x; rz++) for (let rx = r0x; rx <= r1x; rx++) {
+    const p = ctx.e.structPos(sdef.id, ctx.seed, rx, rz);
+    if (!p || Math.hypot(p.x, p.z) > R) continue;
+    if (ctx.e.viable(sdef.id, p.x, p.z) && ++got >= need) return false;
+  }
+  return true;
+}
 
 class SeedContext {
   constructor(engine, seed, mode) {
@@ -174,8 +207,12 @@ export function stagesOf(compiled) {
  * stageStats (opcional): [{n,k,ms}] por etapa. n cuenta solo semillas que LLEGARON a la etapa (regla de la cadena);
  * ms es el tiempo gastado en ella. Sirve para estimar la frecuencia y para medir el rendimiento de cada filtro.
  */
-export function evaluateSeed(engine, compiled, seed, mode, full = false, stageStats = null) {
+export function evaluateSeed(engine, compiled, seed, mode, full = false, stageStats = null, turbo = null) {
   const ctx = new SeedContext(engine, seed, mode);
+  if (turbo && !full) {
+    // Turbo solo sobre las condiciones de estructura centradas en el spawn del primer nivel del AND (nunca en calibracion).
+    for (const st of stagesOf(compiled)) if (st.kind !== 'group' && turboLeafRejects(ctx, st, turbo.slack)) return { pass: false, leaves: {}, prefiltered: true };
+  }
   const out = {};
   let pass;
   const r0 = compiled.root;

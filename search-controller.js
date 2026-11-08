@@ -12,7 +12,7 @@ export class SearchController {
     this.reset();
   }
   reset() {
-    this.stats = { examined: 0, matches: 0, elapsedMs: 0, speed: 0, avgSpeed: 0, etaMs: null, load: null, calib: { n: 0, leaves: {} }, stages: [], stopReason: null };
+    this.stats = { examined: 0, prefiltered: 0, matches: 0, elapsedMs: 0, speed: 0, avgSpeed: 0, etaMs: null, load: null, calib: { n: 0, leaves: {} }, stages: [], stopReason: null };
     this.domain = null; this.total = null; this._speedWin = []; this._busyMs = 0; this._ema = null;
   }
   _setState(s) { this.state = s; this.h.onState?.(s); }
@@ -38,7 +38,7 @@ export class SearchController {
       w.onerror = (ev) => { this.h.onError?.(ev.message || 'Error en un worker'); };
       w.idle = false;
       ready.push(new Promise((res, rej) => { w._ready = res; w._fail = rej; }));
-      w.postMessage({ type: 'init', wasmUrl: cfg.wasmUrl, mc: cfg.mc, large: cfg.large, rules: cfg.rules, mode: cfg.mode, calibEvery: this.cfg.calibEvery });
+      w.postMessage({ type: 'init', wasmUrl: cfg.wasmUrl, mc: cfg.mc, large: cfg.large, rules: cfg.rules, mode: cfg.mode, calibEvery: this.cfg.calibEvery, turbo: cfg.turbo || null });
       this.workers.push(w);
     }
     this._setState('running');
@@ -91,7 +91,7 @@ export class SearchController {
     if (m.type !== 'batchDone') return;
     w.idle = true; this._inflight--;
     const s = this.stats;
-    s.examined += m.examined; s.matches += m.matches.length; s.calib.n += m.calib.n; this._busyMs += m.ms;
+    s.examined += m.examined; s.prefiltered += m.prefiltered || 0; s.matches += m.matches.length; s.calib.n += m.calib.n; this._busyMs += m.ms;
     for (const [id, v] of Object.entries(m.calib.leaves)) {
       const t = (s.calib.leaves[id] ||= { pass: 0, metrics: [] });
       t.pass += v.pass;

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { WasmEngine } from './wasm-engine.js';
 import { VERSIONS } from './minecraft-versions.js';
 import { structByKey } from './structure-engine.js';
-import { compileRules, evaluateSeed } from './search-engine.js';
+import { compileRules, evaluateSeed, spawnBound } from './search-engine.js';
 import { wilson, upperBoundZero, formatOneIn, classify, proportionSummary, percentile } from './rarity-engine.js';
 import { parseSeed } from './utilities.js';
 import { buildTxt } from './export-engine.js';
@@ -93,11 +93,47 @@ console.log('Exportacion y privacidad');
   const strip = (t) => t.replace(/\/\/.*$/gm, '');
   const files = fs.readdirSync('.').filter((f) => f.endsWith('.js') && f !== 'tests.js');
   ok(files.filter((f) => forbidden.test(strip(fs.readFileSync(f, 'utf8')))).length === 0, 'Ningun modulo usa almacenamiento persistente ni canales de envio');
-  ok(files.filter((f) => /fetch\(/.test(fs.readFileSync(f, 'utf8'))).every((f) => f === 'wasm-engine.js'), 'Solo wasm-engine.js usa fetch (carga el .wasm local)');
+  ok(files.filter((f) => /fetch\(/.test(fs.readFileSync(f, 'utf8'))).every((f) => f === 'wasm-engine.js' || f === 'sw.js'), 'Solo wasm-engine.js (carga el .wasm local) y sw.js (cache de los archivos de la app, mismo origen) usan fetch');
   const html = fs.readFileSync('index.html', 'utf8');
   ok(/connect-src 'self'/.test(html) && !/(src|href)="https?:/.test(html), 'CSP limita conexiones al propio origen; sin recursos externos');
   const dirs = fs.readdirSync('.', { withFileTypes: true }).filter((d) => d.isDirectory() && !['node_modules', '.git'].includes(d.name));
   ok(dirs.length === 0, 'No hay carpetas de codigo en la raiz', dirs.map((d) => d.name).join(','));
+  // --- PWA (app instalable): manifiesto, iconos, service worker y archivos en cache ---
+  const man = JSON.parse(fs.readFileSync('manifest.webmanifest', 'utf8'));
+  ok(man.name && man.start_url && man.display === 'standalone' && /^#[0-9a-f]{6}$/i.test(man.theme_color), 'Manifiesto PWA valido (nombre, start_url, standalone, color)');
+  const pngSize = (f) => { const b = fs.readFileSync(f); return b.readUInt32BE(16) + 'x' + b.readUInt32BE(20); };
+  ok(man.icons.every((i) => fs.existsSync(i.src) && pngSize(i.src) === i.sizes), 'Los iconos del manifiesto existen y tienen el tamano declarado');
+  ok(man.icons.some((i) => i.purpose === 'maskable') && man.icons.some((i) => i.sizes === '192x192') && man.icons.some((i) => i.sizes === '512x512'), 'Iconos 192, 512 y maskable presentes');
+  ok(fs.existsSync('apple-touch-icon.png') && pngSize('apple-touch-icon.png') === '180x180', 'apple-touch-icon 180x180 presente');
+  const sw = fs.readFileSync('sw.js', 'utf8');
+  const swFiles = [...sw.match(/const FILES = \[([\s\S]*?)\];/)[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  ok(swFiles.filter((f) => f !== './').every((f) => fs.existsSync(f)), 'Todos los archivos precacheados por sw.js existen', swFiles.filter((f) => f !== './' && !fs.existsSync(f)).join(','));
+  const imported = new Set();
+  for (const f of files.concat(['app.js'])) for (const m of fs.readFileSync(f, 'utf8').matchAll(/from '\.\/([^']+)'/g)) imported.add(m[1]);
+  ok([...imported].every((f) => swFiles.includes(f)), 'Todo modulo importado esta en la cache sin conexion', [...imported].filter((f) => !swFiles.includes(f)).join(','));
+  ok(swFiles.includes('search-worker.js') && swFiles.includes('seedhunter-engine.wasm') && swFiles.includes('seedhunter-engine-simd.wasm'), 'Worker y ambos .wasm se cachean para uso sin conexion');
+  ok(/rel="manifest"/.test(html) && /src="pwa\.js"/.test(html) && /apple-touch-icon/.test(html), 'index.html enlaza manifiesto, pwa.js y apple-touch-icon');
+}
+
+
+console.log('Turbo (prefiltro antes del spawn)');
+{
+  const leaf = (st, radius) => ({ kind: 'leaf', id: 'c' + st + radius, cond: 'structure', enabled: true, optional: false, priority: 50, center: 'spawn', struct: structByKey(st).id, minCount: 1, maxCount: null, radius, minDist: 0 });
+  const mkRules = (a, b) => compileRules({ kind: 'group', op: 'AND', id: 'r', enabled: true, priority: 50, children: [a, b] });
+  const RULES = { MC_1_21_1: mkRules(leaf('Mansion', 1500), leaf('Village', 800)), MC_1_16_5: mkRules(leaf('Village', 600), leaf('Desert_Pyramid', 700)) };
+  for (const key of ['MC_1_21_1', 'MC_1_16_5']) {
+    const rules = RULES[key];
+    const eng = engines['seedhunter-engine-simd.wasm']; eng.setup(V(key), false);
+    const bound = spawnBound(V(key));
+    let rnd = 987654321n; const next = () => { rnd = BigInt.asUintN(64, rnd * 6364136223846793005n + 1442695040888963407n); return BigInt.asIntN(64, rnd); };
+    const seeds = Array.from({ length: 250 }, next);
+    const exact = seeds.filter((s) => evaluateSeed(eng, rules, s, 'normal', false, null, null).pass).map(String);
+    const turbo = seeds.filter((s) => evaluateSeed(eng, rules, s, 'normal', false, null, { slack: bound }).pass).map(String);
+    ok(Number.isFinite(bound) && JSON.stringify(exact) === JSON.stringify(turbo), `Turbo con margen = cota teorica (${bound}) da exactamente las mismas semillas (${key}, ${exact.length} validas de 250)`);
+    const turbo1000 = seeds.filter((s) => evaluateSeed(eng, rules, s, 'normal', false, null, { slack: 1000 }).pass).map(String);
+    ok(turbo1000.every((s) => exact.includes(s)), `Turbo nunca produce falsos positivos (${key})`);
+  }
+  ok(!Number.isFinite(spawnBound(V('MC_1_12_2'))), 'Sin cota teorica del spawn en <= 1.12: Turbo se declara siempre aproximado');
 }
 
 console.log(`\n${pass} correctas, ${fail} fallidas`);

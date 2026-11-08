@@ -4,7 +4,7 @@ Buscador, analizador y clasificador de semillas de Minecraft **Java Edition**, c
 
 El motor de generación de mundo es [Cubiomes](https://github.com/Cubitect/cubiomes) (MIT), compilado a WebAssembly y ejecutado en Web Workers. **Todos los archivos están en la raíz del repositorio; no hay carpetas.**
 
-> Estado: **versión 0.1 funcional**. Lo que está implementado y lo que está pendiente se detalla abajo, sin maquillar.
+> Estado: **versión 0.3 (instalable como PWA)**. Lo que está implementado y lo que está pendiente se detalla abajo, sin maquillar.
 
 ## Ejecutar en local
 
@@ -16,6 +16,33 @@ python3 -m http.server 8080      # o: npm run serve
 ```
 
 Pruebas (Node ≥ 18, sin dependencias): `node tests.js` (o `npm test`).
+
+## Turbo (opcional) y rendimiento
+
+Medido en un solo hilo: calcular el **spawn** cuesta ≈ 4 ms por semilla en 1.18+ y es casi todo el tiempo de una semilla (el resto, ≈ 0,1 ms). Por eso las condiciones de estructura «desde el spawn» limitan la velocidad; las centradas en el origen no lo necesitan.
+
+**Turbo** (pestaña Búsqueda, desactivado por defecto): antes de calcular el spawn comprueba si existe alguna estructura viable a ≤ radio + margen del origen y, si no, descarta la semilla. Solo toca condiciones de estructura «desde el spawn» del primer nivel del AND, en modos Normal y Avanzado, y nunca en las semillas de calibración.
+
+- Con margen = cota teórica del spawn (2800 bloques en 1.18+, 800 en 1.13–1.17; sin cota ≤ 1.12) el resultado es **idéntico** al de la búsqueda normal (comprobado en `tests.js`).
+- Con margen 1000 (por defecto) es aproximado: puede perder una semilla válida cuyo spawn esté a más de 1000 bloques del origen. En 4.500 spawns medidos el máximo fue 987; en las pruebas con margen 1000 no se perdió ninguna y con 500 sí (6). Nunca produce falsos positivos.
+- Aceleración medida con 1 hilo, 1.21.1: ≈ 3,5–4,7× con Mansión ≤ 1500 + Aldea ≤ 800; ≈ 1,7× con margen exacto; sin ganancia (se pausa solo) con reglas donde casi todo pasa el prefiltro.
+- El análisis previo (piloto) se mide siempre sin Turbo; las cifras por etapa de una búsqueda con Turbo excluyen las semillas prefiltradas.
+
+El perfil de rendimiento por defecto es ahora «Alto» (núcleos − 1).
+
+## Instalación de escritorio (Windows)
+
+El paquete de instalación (`INSTALAR.bat` + `scripts/` + `app/`) copia la aplicación a `%LOCALAPPDATA%\SeedHunterJimx`, crea el acceso directo en el escritorio y en el menú Inicio, y al abrirla lanza un servidor local (solo `localhost`) y una ventana de aplicación de Edge/Chrome con un perfil propio y sin el ahorro de energía en segundo plano. No necesita permisos de administrador ni instalar nada. El cálculo sigue siendo CPU/WebAssembly; la GPU no se usa para generar mundos (ver límites).
+
+## App instalable (PWA)
+
+Desde la versión 0.3 la web se puede **instalar como aplicación** (icono propio, ventana sin barra del navegador y apertura sin conexión). Requiere servirla por **HTTPS** (GitHub Pages sirve) o desde `localhost`.
+
+- **Windows / Android / Chrome / Edge:** abre la web y pulsa el botón **«Instalar app»** (o el icono de instalar de la barra de direcciones).
+- **iPhone / iPad (Safari):** Compartir → «Añadir a pantalla de inicio».
+- `sw.js` solo guarda en caché los archivos de la propia app (código, `.wasm`, iconos); **nunca datos del usuario**. Usa la red primero, así que al actualizar el repositorio la app instalada se actualiza sola al abrirla con conexión. Para forzar la renovación de la caché cambia `CACHE` en `sw.js`.
+- Archivos nuevos (todos en la raíz): `manifest.webmanifest`, `sw.js`, `pwa.js`, `icon-192.png`, `icon-512.png`, `icon-maskable-512.png`, `apple-touch-icon.png`.
+- Rendimiento: la instalación **no** cambia el motor (sigue siendo CPU/WebAssembly en Web Workers); solo cambia cómo se abre la app.
 
 ## Publicar en GitHub Pages
 

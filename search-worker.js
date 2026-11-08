@@ -5,6 +5,8 @@ import { compileRules, evaluateSeed, makeContext, scanStructure, stagesOf } from
 import { structById } from './structure-engine.js';
 
 let engine = null, compiled = null, cfg = null, curMc = null;
+// Turbo adaptativo: si el prefiltro descarta menos del 20 % de las semillas no compensa su coste y se pausa 3.000 semillas.
+const turboCtl = { on: false, slack: 0, tried: 0, hit: 0, pausedLeft: 0 };
 
 function ensureVersion(mc, large = false) {
   if (curMc !== `${mc}/${large}`) { engine.setup(mc, large); curMc = `${mc}/${large}`; }
@@ -16,15 +18,25 @@ self.onmessage = async (ev) => {
     if (m.type === 'init') {
       engine = await WasmEngine.load(m.wasmUrl);
       cfg = m; ensureVersion(m.mc, m.large);
+      turboCtl.on = !!m.turbo; turboCtl.slack = m.turbo?.slack || 0; turboCtl.tried = turboCtl.hit = turboCtl.pausedLeft = 0;
       if (m.rules) compiled = compileRules(m.rules);
       self.postMessage({ type: 'ready', wasm: m.wasmUrl });
     } else if (m.type === 'batch') {
       const t0 = performance.now(), matches = [], calib = { n: 0, leaves: {} };
+      let prefiltered = 0;
       const stages = stagesOf(compiled).map(() => ({ n: 0, k: 0, ms: 0 }));
       for (let i = 0; i < m.seeds.length; i++) {
         const seed = BigInt(m.seeds[i]);
         const isCalib = (m.startIndex + i) % cfg.calibEvery === 0;
-        const r = evaluateSeed(engine, compiled, seed, cfg.mode, isCalib, stages);
+        let tb = null;
+        if (turboCtl.on && !isCalib) {
+          if (turboCtl.pausedLeft > 0) turboCtl.pausedLeft--; else tb = { slack: turboCtl.slack };
+        }
+        const r = evaluateSeed(engine, compiled, seed, cfg.mode, isCalib, stages, tb);
+        if (tb) {
+          turboCtl.tried++; if (r.prefiltered) { prefiltered++; turboCtl.hit++; }
+          if (turboCtl.tried >= 300) { if (turboCtl.hit < turboCtl.tried * 0.2) turboCtl.pausedLeft = 3000; turboCtl.tried = turboCtl.hit = 0; }
+        }
         if (isCalib) {
           calib.n++;
           for (const [id, v] of Object.entries(r.leaves)) {
@@ -35,7 +47,7 @@ self.onmessage = async (ev) => {
         }
         if (r.pass) matches.push(r.record);
       }
-      self.postMessage({ type: 'batchDone', id: m.id, examined: m.seeds.length, matches, calib, stages, ms: performance.now() - t0 });
+      self.postMessage({ type: 'batchDone', id: m.id, examined: m.seeds.length, matches, calib, stages, prefiltered, ms: performance.now() - t0 });
     } else if (m.type === 'area') {
       ensureVersion(m.mc, m.large); engine.apply(m.dim, BigInt(m.seed));
       const data = engine.area(m.scale, m.x, m.z, m.w, m.h);
