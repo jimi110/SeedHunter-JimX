@@ -1,0 +1,7 @@
+node_modules/
+*.o
+*.log
+.DS_Store
+# Binarios nativos temporales de las pruebas de referencia
+ref
+ref-native

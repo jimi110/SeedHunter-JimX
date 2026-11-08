@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="es" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self'; connect-src 'self'; form-action 'none'; base-uri 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0a1020">
+  <title>SeedHunter Jimx</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cpath d='M24 3.5l17.5 10.2v20.6L24 44.5 6.5 34.3V13.7z' fill='%233ddc97' fill-opacity='.2' stroke='%233ddc97' stroke-width='3' stroke-linejoin='round'/%3E%3Ccircle cx='24' cy='24.5' r='6' fill='none' stroke='%233ddc97' stroke-width='3'/%3E%3Ccircle cx='24' cy='24.5' r='2.5' fill='%233ddc97'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="bg" aria-hidden="true"><i class="orb o1"></i><i class="orb o2"></i><i class="orb o3"></i></div>
+
+  <div class="shell">
+    <aside class="side glass" aria-label="Navegación principal">
+      <div class="brand"><span class="logo" id="logo"></span><span class="name">SEEDHUNTER <b>JIMX</b></span></div>
+      <nav id="tabs" aria-label="Secciones"></nav>
+      <div class="side-foot">
+        <span class="pill" title="Todo se calcula en tu navegador. Nada se guarda ni se envía."><span id="lock-icon"></span><span class="side-label">100 % local</span></span>
+        <button class="btn icon-only" id="btn-theme" aria-label="Cambiar tema"></button>
+      </div>
+    </aside>
+
+    <div class="content">
+      <header class="mobilebar glass">
+        <div class="brand"><span class="logo" id="logo-m"></span><span class="name">SEEDHUNTER <b>JIMX</b></span></div>
+        <button class="btn icon-only" id="btn-theme-m" aria-label="Cambiar tema"></button>
+      </header>
+
+      <section class="controlbar glass" aria-label="Control de búsqueda">
+        <div class="cb-row">
+          <div class="cb-selects">
+            <label>Edición <select id="cb-edition"></select></label>
+            <label>Versión <select id="cb-version"></select></label>
+            <label>Modo <select id="cb-mode"></select></label>
+          </div>
+          <div class="cb-actions">
+            <button class="btn primary" id="btn-start"></button>
+            <button class="btn" id="btn-pause" disabled></button>
+            <button class="btn" id="btn-resume" disabled></button>
+            <button class="btn danger" id="btn-cancel" disabled></button>
+            <button class="btn" id="btn-restart"></button>
+          </div>
+        </div>
+        <div class="progress"><div class="bar" id="bar"></div><div class="mark" id="bar-mark" hidden></div></div>
+        <div class="stats" id="stats"></div>
+        <div class="muted ver" id="engine-tag">motor: cargando…</div>
+      </section>
+
+      <main>
+        <section id="tab-search" class="tab"></section>
+        <section id="tab-rules" class="tab"></section>
+        <section id="tab-perf" class="tab"></section>
+        <section id="tab-results" class="tab"></section>
+        <section id="tab-hunter" class="tab"></section>
+        <section id="tab-map" class="tab"></section>
+        <section id="tab-settings" class="tab"></section>
+      </main>
+    </div>
+  </div>
+
+  <nav class="bottomnav glass" id="bottomnav" aria-label="Navegación móvil"></nav>
+  <div class="morepop glass" id="morepop" hidden></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <noscript><p style="padding:2rem">SeedHunter Jimx necesita JavaScript y WebAssembly.</p></noscript>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
