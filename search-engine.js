@@ -3,6 +3,7 @@
 import { SEARCH_MODES } from './configuration.js';
 import { structById, structByKey } from './structure-engine.js';
 import { dist } from './utilities.js';
+import { groupIds } from './biome-engine.js';
 import { GAME_DATA } from './game-data.js';
 
 // Tipos de condicion. cost = orden aproximado de coste (menor primero); better: 'low' (menor valor = mas raro) | 'high'.
@@ -13,6 +14,8 @@ export const LEAF_TYPES = {
   structureNear: { label: 'Estructuras próximas entre sí', cost: 4, better: 'low' },
   biomeArea: { label: 'Biomas en un área', cost: 5, better: 'high' },
   biomeDiversity: { label: 'Diversidad de biomas', cost: 5, better: 'high' },
+  spawnLandform: { label: 'Forma de tierra del spawn', cost: 6, better: null },
+  spawnTerrain: { label: 'Altura / relieve del spawn', cost: 4, better: null },
 };
 
 // Cubiomes (isViableStructureTerrain) solo aproxima el terreno para estos tipos y solo en 1.18+.
@@ -109,9 +112,57 @@ function sampleBiomes(ctx, cx, cz, radius) {
   return { counts, total, scale: s };
 }
 
+const OCEAN_IDS = new Set(groupIds('ocean'));
+
+/**
+ * Forma de tierra alrededor de (cx,cz) por rejilla de biomas del modo elegido. «Agua» = biomas oceanicos; rios y playas cuentan como tierra
+ * (un rio no parte un continente). Relleno 4-conexo desde la celda del punto. Es una ESTIMACION por muestreo, no un analisis de terreno real.
+ */
+export function landForm(ctx, cx, cz, R, peninsulaRadius) {
+  const mode = ctx.mode; let s = mode.biomeScale[mode.biomeScale.length - 1];
+  for (const cand of mode.biomeScale) { if (Math.pow((2 * R) / cand, 2) <= mode.biomeCells) { s = cand; break; } }
+  const x0 = Math.floor((cx - R) / s), z0 = Math.floor((cz - R) / s), w = Math.ceil((2 * R) / s) + 1;
+  ctx.ensureDim(0);
+  const area = ctx.e.area(s, x0, z0, w, w), land = new Uint8Array(w * w);
+  for (let i = 0; i < land.length; i++) land[i] = OCEAN_IDS.has(area[i]) ? 0 : 1;
+  const si = Math.min(w - 1, Math.max(0, Math.floor(cx / s) - x0)), sj = Math.min(w - 1, Math.max(0, Math.floor(cz / s) - z0));
+  if (!land[sj * w + si]) return { startsOnLand: false, scale: s };
+  const seen = new Uint8Array(w * w), stack = [sj * w + si]; seen[sj * w + si] = 1; let n = 0, edge = false;
+  while (stack.length) {
+    const k = stack.pop(); n++; const i = k % w, j = (k - i) / w;
+    if (i === 0 || j === 0 || i === w - 1 || j === w - 1) edge = true;
+    for (const nk of [i > 0 ? k - 1 : -1, i < w - 1 ? k + 1 : -1, j > 0 ? k - w : -1, j < w - 1 ? k + w : -1]) if (nk >= 0 && land[nk] && !seen[nk]) { seen[nk] = 1; stack.push(nk); }
+  }
+  let disc = 0, water = 0;
+  for (let j = 0; j < w; j++) for (let i = 0; i < w; i++) { if (dist(cx, cz, (x0 + i) * s + s / 2, (z0 + j) * s + s / 2) <= peninsulaRadius) { disc++; if (!land[j * w + i]) water++; } }
+  return { startsOnLand: true, scale: s, area: n * s * s, touchesEdge: edge, waterFrac: disc ? water / disc : 0 };
+}
+
 const idSet = (leaf) => leaf._set || (leaf._set = new Set(leaf.biomes || []));
 
 const EVAL = {
+  spawnLandform(leaf, ctx) {
+    const c = ctx.center(leaf.center), f = landForm(ctx, c.x, c.z, leaf.scanRadius, leaf.peninsulaRadius);
+    const how = (sc) => `estimación por muestreo de biomas (celdas de ${sc} bloques)`;
+    if (!f.startsOnLand) return { pass: false, metric: null, detail: { form: 'water' }, verified: how(f.scale) };
+    let form = 'other'; // tierra cerrada pero grande: ni isla ni continente
+    if (!f.touchesEdge && f.area <= leaf.maxIslandArea) form = 'island';
+    else if (f.touchesEdge && f.waterFrac >= leaf.minWaterFrac) form = 'peninsula';
+    else if (f.touchesEdge) form = 'continent';
+    // Una peninsula tambien es tierra continental: se acepta «continente» si el usuario lo pide y no es peninsula.
+    const pass = leaf.form === form;
+    return { pass, metric: form === 'isla' ? f.area : f.waterFrac, detail: { form, area: f.area, waterFrac: f.waterFrac, scale: f.scale }, verified: how(f.scale) };
+  },
+  spawnTerrain(leaf, ctx) {
+    ctx.ensureDim(0);
+    const c = ctx.center(leaf.center), r = leaf.radius, x4 = Math.floor((c.x - r) / 4), z4 = Math.floor((c.z - r) / 4), n = Math.max(2, Math.ceil((2 * r) / 4));
+    const g = ctx.e.heights(x4, z4, n, n);
+    if (!g) return { pass: false, metric: null, detail: { unavailable: true }, verified: 'no disponible (solo Overworld 1.18+)' };
+    let mn = Infinity, mx = -Infinity, sum = 0; for (const y of g.y) { if (y < mn) mn = y; if (y > mx) mx = y; sum += y; }
+    const mean = sum / g.y.length, range = mx - mn;
+    const pass = (leaf.maxRange == null || range <= leaf.maxRange) && (leaf.minHeight == null || mean >= leaf.minHeight) && (leaf.maxHeight == null || mean <= leaf.maxHeight);
+    return { pass, metric: range, detail: { mean, range, min: mn, max: mx }, verified: 'altura aproximada de Cubiomes (sin ruido 3D fino)' };
+  },
   spawnBiome(leaf, ctx) {
     const sp = ctx.spawn();
     const b = ctx.e.biomeAt(sp.x, sp.z, { scale: 1, y: 63 });

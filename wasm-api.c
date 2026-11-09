@@ -42,6 +42,13 @@ EXPORT("sh_gen_area") int sh_gen_area(int scale, int x, int z, int w, int h, int
     return rc;
 }
 
+/* Altura aproximada de la superficie (Cubiomes mapApproxHeight, solo Overworld 1.18+): rejilla w*h con paso de 4 bloques desde (x,z) en
+ * unidades de 4 bloques. Rellena out_y (float) y out_ids (int, bioma). Devuelve 0 si es valida, otro valor si no esta soportado. */
+EXPORT("sh_height") int sh_height(int x4, int z4, int w, int h, float *out_y, int *out_ids) {
+    if (!G_ready || G.dim != DIM_OVERWORLD || G.mc < MC_1_18) return -1;
+    return mapApproxHeight(out_y, out_ids, &G, NULL, x4, z4, w, h);
+}
+
 /* Configuracion de estructura por version: out = {salt, regionSize, chunkRange, dim}; out_rarity[0]=rarity. */
 EXPORT("sh_struct_cfg") int sh_struct_cfg(int type, int *out, float *rarity) {
     StructureConfig sc;

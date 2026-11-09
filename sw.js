@@ -1,14 +1,14 @@
 // Service worker de SeedHunter Jimx: permite instalar la app y abrirla sin conexion.
 // Solo guarda en cache los archivos de la propia app (codigo, .wasm, iconos). NO guarda datos del usuario.
 // Estrategia: red primero (siempre la version nueva si hay conexion), cache como respaldo sin conexion.
-const CACHE = 'seedhunter-jimx-v0.3.0';
+const CACHE = 'seedhunter-jimx-v0.4.0';
 const FILES = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
   'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon.png',
   'app.js', 'app-state.js', 'biome-engine.js', 'collision-engine.js', 'configuration.js', 'cpu-engine.js',
   'export-engine.js', 'feasibility-engine.js', 'game-data.js', 'gpu-engine.js', 'icons.js', 'loot-engine.js',
   'map-engine.js', 'minecraft-versions.js', 'pwa.js', 'rarity-engine.js', 'search-controller.js', 'search-engine.js',
-  'search-worker.js', 'structure-engine.js', 'ui-analysis.js', 'ui-results.js', 'ui-rules.js', 'utilities.js',
+  'search-worker.js', 'structure-engine.js', 'ui-analysis.js', 'version-support.js', 'ui-results.js', 'ui-rules.js', 'utilities.js',
   'wasm-engine.js', 'seedhunter-engine.wasm', 'seedhunter-engine-simd.wasm',
 ];
 

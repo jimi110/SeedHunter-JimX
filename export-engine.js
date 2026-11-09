@@ -22,7 +22,7 @@ export function buildTxt(cards, matchBySeed, ctx, fields) {
   for (const card of cards) {
     const m = matchBySeed.get(card.seed);
     L.push('='.repeat(60), `SEED: ${card.seed}`);
-    if (on('version')) L.push(`Edición: ${ctx.edition} · Versión: ${ctx.versionLabel} · Modo: ${ctx.modeLabel}`);
+    if (on('version')) { L.push(`Edición: ${ctx.edition} · Versión: ${ctx.versionLabel} · Modo: ${ctx.modeLabel}`); for (const w of ctx.versionWarnings || []) L.push('AVISO: ' + w); }
     if (on('spawn')) L.push(`Spawn ESTIMADO (Cubiomes; puede diferir del real): X ${m.spawn.x}, Z ${m.spawn.z} · Bioma en ese punto: ${biomeName(m.spawnBiome)}`);
     if (on('structures')) {
       for (const x of card.perLeaf) {

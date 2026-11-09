@@ -20,14 +20,14 @@ const PRESETS = [
   { label: 'Muchos biomas en radio pequeño', build: () => [newLeaf('biomeDiversity', { minDistinct: 10, radius: 300 })] },
 ];
 const SPAWN_QUICK = [
+  { label: 'Spawn en isla', cond: 'spawnLandform', extra: { form: 'island' } }, { label: 'Spawn en continente', cond: 'spawnLandform', extra: { form: 'continent' } }, { label: 'Spawn en península', cond: 'spawnLandform', extra: { form: 'peninsula' } },
+  { label: 'Terreno plano en el spawn', cond: 'spawnTerrain', extra: { maxRange: 6 } }, { label: 'Spawn elevado (altura ≥ 90)', cond: 'spawnTerrain', extra: { maxRange: null, minHeight: 90 } },
   { label: 'Spawn nevado', cond: 'spawnBiome', group: 'snowy' }, { label: 'Spawn en bosque', cond: 'spawnBiome', group: 'forest' },
   { label: 'Spawn en desierto', cond: 'spawnBiome', group: 'desert' }, { label: 'Spawn en montañas', cond: 'spawnBiome', group: 'mountain' },
   { label: 'Océano cerca (≤ 300)', cond: 'biomeArea', group: 'ocean', radius: 300 }, { label: 'Río cerca (≤ 200)', cond: 'biomeArea', group: 'river', radius: 200 },
   { label: 'Junto a la costa (≤ 150)', cond: 'biomeArea', group: 'beach', radius: 150 }, { label: 'Cuevas (biomas) cerca', cond: 'biomeArea', group: 'cave', radius: 300 },
 ];
 const UNAVAILABLE = [
-  'Spawn en isla / continente / península (requiere análisis de conectividad de tierra; no implementado)',
-  'Spawn en terreno plano o elevado, rangos de altura (requiere alturas de superficie fiables; Cubiomes solo las aproxima)',
   'Spawn junto a lagos (los lagos no son biomas; requieren generación de terreno)',
   'Estructuras próximas a cuevas o barrancos (requiere terreno 3D)',
   'Variantes de aldea y condiciones especiales por estructura (Cubiomes las ofrece, aún sin exponer en la interfaz)',
@@ -50,9 +50,9 @@ export function renderRules(root, ctx) {
       h('span', { class: 'muted', text: 'Plantillas:' }),
       h('select', { on: { change: (e) => { const p = PRESETS[e.target.value]; if (p) { state.rules.children.push(...p.build().filter((l) => !(l.biomes && l.biomes.some((b) => b === undefined)))); rerender(); } e.target.value = ''; } } },
         h('option', { value: '', text: 'Añadir plantilla de ejemplo…' }), ...PRESETS.map((p, i) => h('option', { value: i, text: p.label }))),
-      h('select', { on: { change: (e) => { const q = SPAWN_QUICK[e.target.value]; if (q) { state.rules.children.push(newLeaf(q.cond, { biomes: groupIds(q.group).filter(ctx.info.biomeAvailable), ...(q.radius ? { radius: q.radius } : {}) })); rerender(); } e.target.value = ''; } } },
+      h('select', { on: { change: (e) => { const q = SPAWN_QUICK[e.target.value]; if (q) { state.rules.children.push(newLeaf(q.cond, { ...(q.group ? { biomes: groupIds(q.group).filter(ctx.info.biomeAvailable) } : {}), ...(q.radius ? { radius: q.radius } : {}), ...(q.extra || {}) })); rerender(); } e.target.value = ''; } } },
         h('option', { value: '', text: 'Atajos de spawn / entorno…' }), ...SPAWN_QUICK.map((p, i) => h('option', { value: i, text: p.label })))),
-    errs.length ? h('div', { class: 'notice warn' }, errs.map((e) => h('div', { text: '⚠ ' + e }))) : null,
+    errs.length ? h('div', { class: 'notice warn' }, errs.map((e) => h('div', { text: '⚠ ' + e }))) : '',
     h('p', { class: 'muted small-text', text: 'Raíz: ' + OP_HELP[state.rules.op] + '. Dentro de cada grupo puedes cambiar el operador. Las condiciones «opcionales» no filtran: solo añaden información a las semillas que ya cumplen.' }),
     renderGroup(state.rules, null, ctx, rerender, true),
     h('details', { class: 'panel-sub' }, h('summary', { text: 'Modo experto (JSON)' }), expertEditor(ctx, rerender)),
@@ -128,6 +128,17 @@ function renderLeaf(l, parent, ctx, rerender) {
       f.append(biomePicker(l, ctx),
         field('Coincidencia', h('select', { on: { change: (e) => { l.match = e.target.value; } } }, h('option', { value: 'any', text: 'Alguno de los biomas', selected: l.match === 'any' }), h('option', { value: 'all', text: 'Todos los biomas', selected: l.match === 'all' }))),
         field('Radio (bloques)', numField(l, 'radius', { min: 16, step: 16 })), field('Cobertura mínima (%)', numField(l, 'minPct', { min: 0, max: 100, step: 0.5 })), field('Desde', centerSel(l)));
+      break;
+    case 'spawnLandform':
+      f.append(field('Forma', h('select', { on: { change: (e) => { l.form = e.target.value; } } }, ...[['island', 'Isla (tierra cerrada y pequeña)'], ['continent', 'Continente (la tierra llega al borde de la ventana)'], ['peninsula', 'Península (continente rodeado de mucha agua)']].map(([v, t]) => h('option', { value: v, text: t, selected: l.form === v })))),
+        field('Ventana de análisis (radio)', numField(l, 'scanRadius', { min: 200, step: 100 })), field('Isla: área máx. (bloques²)', numField(l, 'maxIslandArea', { min: 1000, step: 10000 })),
+        field('Península: radio local', numField(l, 'peninsulaRadius', { min: 50, step: 50 })), field('Península: agua mín. (0–1)', numField(l, 'minWaterFrac', { min: 0, max: 1, step: 0.05 })), field('Desde', centerSel(l)),
+        h('p', { class: 'muted small-text', text: 'Estimación por muestreo de biomas (océano = agua; ríos y playas = tierra), con la resolución del modo elegido (se indica en cada resultado). Los umbrales son tuyos: no hay definición oficial de «isla» o «península».' }));
+      break;
+    case 'spawnTerrain':
+      f.append(field('Radio (bloques)', numField(l, 'radius', { min: 8, step: 8 })), field('Relieve máx. (máx−mín, vacío = sin tope)', numField(l, 'maxRange', { min: 0, step: 1, nullable: true })),
+        field('Altura media mín. (vacío = sin tope)', numField(l, 'minHeight', { step: 5, nullable: true })), field('Altura media máx. (vacío = sin tope)', numField(l, 'maxHeight', { step: 5, nullable: true })), field('Desde', centerSel(l)),
+        h('p', { class: 'muted small-text', text: 'Altura aproximada que calcula Cubiomes (solo Overworld 1.18+, sin el ruido 3D fino de la superficie). Plano ≈ relieve ≤ 6; elevado ≈ altura media ≥ 90. El nivel del mar es 63.' }));
       break;
     case 'biomeDiversity': f.append(field('Biomas distintos (mín.)', numField(l, 'minDistinct', { min: 1 })), field('Radio (bloques)', numField(l, 'radius', { min: 16, step: 16 })), field('Desde', centerSel(l))); break;
     case 'structure':

@@ -56,7 +56,8 @@ No se ha publicado nada en GitHub desde este entorno: los comandos anteriores lo
 
 | Área | Estado |
 |---|---|
-| Versiones | Java Edition, catálogo generado desde Cubiomes (hasta la rama 1.21 «Winter Drop»). Bedrock: **desactivado** (otros algoritmos). Versiones por año (26.x): **no incluidas** en Cubiomes, no se ofrecen. |
+| Versiones | Java Edition, catálogo generado desde Cubiomes (hasta la rama 1.21 «Winter Drop»). Bedrock: **desactivado** (otros algoritmos). Versiones por año 26.1 / 26.2 / 26.3: se ofrecen **aparte y con aviso**, servidas por el motor 1.21 Winter Drop y marcadas «equivalente en datos» (26.1) o «aproximada» (26.2, 26.3); ver `version-support.js`. |
+| Forma y relieve del spawn | Condiciones nuevas: spawn en **isla / continente / península** (relleno de tierra sobre una rejilla de biomas, umbrales editables) y **terreno plano / elevado / rango de altura** (altura aproximada de Cubiomes, solo 1.18+). Son estimaciones y se etiquetan como tales. |
 | Motor | Cubiomes → WebAssembly (`seedhunter-engine.wasm`, y variante `-simd.wasm` si el navegador soporta SIMD), un módulo por Worker. Compilado con clang + wasm-ld y una mini libc propia (`wasm-libc.c`), sin Emscripten. |
 | Modos | Rápido / Normal / Avanzado hacen cálculos distintos (ver pestaña Búsqueda; cada modo lista qué ejecuta). |
 | Reglas | Constructor AND / OR / NOT con grupos, prioridades, condiciones opcionales, duplicar/agrupar/ordenar y modo experto (JSON). |
@@ -82,12 +83,15 @@ No se ha publicado nada en GitHub desde este entorno: los comandos anteriores lo
 - **Estructuras:** se comprueba posición de intento + viabilidad por bioma. El terreno solo se aproxima en Desert Pyramid, Jungle Temple y Mansion (1.18+) en modo Avanzado.
 - **Biomas por muestreo:** se evalúan celdas de 4/16/64 bloques según modo y radio; biomas diminutos pueden pasar desapercibidos en modos rápidos.
 - **GPU/WebGPU:** solo detección. La generación de mundo (ruido por octavas, capas de enteros, 64 bits, ramas) no se beneficia de forma fiable de la GPU en el navegador, así que se ejecuta en CPU/WebAssembly. No se inventan aceleraciones ni métricas.
-- **No implementado todavía:** spawn en isla/continente/península, terreno plano/elevado, lagos, cuevas 3D y barrancos, variantes de aldea, nuevas versiones por año (26.x).
+- **Isla / continente / península:** estimación por muestreo de biomas (océano = agua; ríos y playas = tierra) con la resolución del modo (4/16/64 bloques). No existe una definición oficial; los umbrales son tuyos. Islas menores que la celda pueden no verse.
+- **Terreno plano / elevado:** usa `mapApproxHeight` de Cubiomes (solo Overworld 1.18+, sin el ruido 3D fino). Sirve para filtrar, no garantiza el relieve exacto del suelo. Antes de 1.18 la condición no existe (demostrado B) y nunca se cumple.
+- **Versiones 26.x (importante):** Cubiomes no las conoce. 26.1 tiene datos de ruido, biomas y estructuras idénticos a 1.21.4 (`python3 check-version-data.py 1.21.4 26.1`), pero **ninguna está contrastada contra el juego**. 26.3 añade el bioma **Dappled Forest** y las **Abandoned Camps**, que el motor no puede generar, y cambia el formato de ruido; sin el `.jar` de Mojang (inaccesible desde el entorno de desarrollo) no se pudo demostrar equivalencia. Todo resultado de bioma en 26.2/26.3 puede diferir del juego real.
+- **No implementado todavía:** lagos, cuevas 3D y barrancos, variantes de aldea, cofres/loot, colisiones reales entre piezas, Dappled Forest/Abandoned Camps, Bedrock.
 - **Rareza:** las frecuencias individuales salen de una submuestra de calibración (1 de cada N semillas evaluada con todas las condiciones). Con pocas semillas son orientativas; la ficha muestra su intervalo y avisa.
 
 ## Validación realizada
 
-`npm test` ejecuta `tests.js` (221 comprobaciones) y `tests-viability.js` (64: fórmula de éxito, categorías, regla de la cadena, demostraciones de imposibilidad contrastadas con semillas reales, veredictos, presupuesto), todas correctas en la última ejecución:
+`npm test` ejecuta `tests.js` (234 comprobaciones), `tests-extension.js` (30: altura aproximada, forma de tierra, relieve, registro de versiones 26.x) y `tests-viability.js` (64: fórmula de éxito, categorías, regla de la cadena, demostraciones de imposibilidad contrastadas con semillas reales, veredictos, presupuesto), todas correctas en la última ejecución:
 
 - Motor WebAssembly (escalar y SIMD) **idéntico a Cubiomes nativo** en spawn, biomas, posiciones y viabilidad de estructuras, para 3 versiones y 4 semillas (`reference-values.json`, generado con `reference-generator.c` compilado con gcc).
 - 300 semillas con «mansión ≤ 1200 bloques»: mismo conjunto que el programa nativo.
@@ -125,7 +129,8 @@ Para actualizar Cubiomes, reemplaza los `cubiomes-*.c/.h` (conservando el prefij
 - WebAssembly: `seedhunter-engine.wasm`, `seedhunter-engine-simd.wasm`, `wasm-api.c`, `wasm-libc.c`, `wasm-libc.h`, `build-wasm.sh`, `generate-data.py`
 - Cubiomes (MIT): `cubiomes-*.c`, `cubiomes-*.h`, `LICENSE-cubiomes`
 - Viabilidad y análisis: `feasibility-engine.js` (estimación, imposibilidad, presupuesto), `ui-analysis.js` (panel previo), `icons.js` (iconos y logotipo propios)
-- Pruebas: `tests.js`, `tests-viability.js`, `reference-generator.c`, `reference-values.json`
+- Versiones posteriores: `version-support.js` (qué se sabe de 26.x), `check-version-data.py` (compara datos de dos versiones con misode/mcmeta; úsalo con cada versión nueva)
+- Pruebas: `tests.js`, `tests-viability.js`, `tests-extension.js`, `reference-generator.c`, `reference-values.json`
 - Proyecto: `README.md`, `package.json`, `.gitignore`, `LICENSE`
 
 `package-lock.json` no existe porque el proyecto no tiene dependencias npm.
@@ -137,3 +142,10 @@ Todo el cálculo ocurre en tu navegador. No hay backend, cuentas, analítica ni 
 ## Licencias
 
 SeedHunter Jimx: MIT (`LICENSE`). Cubiomes © Cubitect: MIT (`LICENSE-cubiomes`). Proyecto no oficial; no está afiliado a Mojang ni Microsoft.
+
+## Cómo preparar una versión nueva (p. ej. 26.4)
+
+1. `python3 check-version-data.py 1.21.4 26.4`: lista biomas, estructuras y archivos de ruido/densidad añadidos, quitados o cambiados.
+2. Sin cambios de biomas/estructuras/ruido → añade una entrada `data-equivalent` en `version-support.js`. Con cambios → entrada `approximate` que los enumere en `differences`.
+3. Si Cubiomes (o tu port) ya la soporta: actualiza `cubiomes-*.c/.h`, `python3 generate-data.py`, `bash build-wasm.sh`, y retira la entrada de `version-support.js`.
+4. Lo que los datos no muestran (colocación de biomas por clima, código del juego) solo se verifica con el `.jar` o con semillas contrastadas con el juego real.

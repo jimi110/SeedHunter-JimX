@@ -27,8 +27,8 @@ export const DEFAULT_VERSION = VERSIONS.find((v) => v.key === 'MC_1_21_1') || NE
 
 /** Aviso mostrado al usuario sobre cobertura real (investigado en noviembre de 2026). */
 export const VERSION_NOTICE =
-  'Cubiomes llega hasta la rama 1.21 (Winter Drop). Java Edition ya usa numeración por año (26.1, 26.2, 26.3…) y esas versiones ' +
-  'no están en el catálogo del motor: no se ofrecen para no mezclar resultados que podrían ser incorrectos.';
+  'Cubiomes llega hasta la rama 1.21 (Winter Drop). Las versiones por año (26.1, 26.2, 26.3…) se ofrecen aparte, con el motor 1.21 Winter Drop, ' +
+  'y marcadas como «equivalente en datos» o «aproximada» según lo que se ha podido comprobar (version-support.js). Ninguna está verificada contra el juego.';
 
 export const versionById = (id) => VERSIONS.find((v) => v.id === Number(id));
 export const versionAtLeast = (id, key) => Number(id) >= GAME_DATA.versions.find(([, k]) => k === key)[0];

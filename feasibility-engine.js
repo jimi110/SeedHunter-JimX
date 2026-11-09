@@ -130,6 +130,16 @@ export function analyzeImpossibility(root, info) {
         if (l.cond === 'biomeArea' && (l.minPct || 0) > 100) return { code: 'A', text: 'Una cobertura superior al 100 % es imposible por definición.' };
         return null;
       }
+      case 'spawnTerrain': {
+        if (!info.heightsOk) return { code: 'B', text: 'La altura aproximada de Cubiomes solo existe en el Overworld de la 1.18 en adelante: en esta versión la condición nunca puede evaluarse.' };
+        if (l.minHeight != null && l.maxHeight != null && l.minHeight > l.maxHeight) return { code: 'A', text: 'La altura mínima es mayor que la máxima.' };
+        if (l.maxRange != null && l.maxRange < 0) return { code: 'A', text: 'Un relieve máximo negativo es imposible por definición.' };
+        return null;
+      }
+      case 'spawnLandform': {
+        if (!(l.scanRadius > l.peninsulaRadius)) return { code: 'A', text: 'La ventana de análisis debe ser mayor que el radio de la península.' };
+        return null;
+      }
       case 'biomeDiversity': {
         if (l.minDistinct > info.overworldBiomeCount) return { code: 'A', text: `Pides ${l.minDistinct} biomas distintos, pero esta versión solo tiene ${info.overworldBiomeCount}.` };
         return null;
@@ -162,6 +172,8 @@ export function analyzeImpossibility(root, info) {
     if (!active(n)) return null;
     if (n.kind === 'leaf') {
       const hit = leafProof(n);
+      if (n.cond === 'spawnTerrain') w('La altura es una aproximación de Cubiomes (sin el ruido 3D fino): sirve para filtrar, no para garantizar terreno exacto.');
+      if (n.cond === 'spawnLandform') w('La forma de tierra (isla/continente/península) es una estimación por muestreo de biomas con umbrales editables; no es un análisis de terreno real.');
       if (n.cond === 'biomeDiversity') w('La diversidad de biomas se mide por muestreo de celdas; en radios pequeños puede subestimarse.');
       if (n.cond === 'stronghold' || n.center === 'spawn') w('El spawn usado es una estimación de Cubiomes (el real depende de bloques de hierba).');
       return hit;
@@ -326,5 +338,5 @@ export function engineInfo(engine) {
   const NON_OVERWORLD = /nether_wastes|crimson_forest|warped_forest|soul_sand_valley|basalt_deltas|the_end|end_highlands|end_midlands|end_barrens|small_end_islands/;
   const ow = BIOMES.filter((b) => !NON_OVERWORLD.test(b.key) && engine.biomeExists(b.id)).length;
   engine.apply(0, 1n);
-  return { structCfg: (id) => engine.structCfg(id), biomeExists: (id) => engine.biomeExists(id), overworldBiomeCount: ow, maxStrongholds: engine.strongholds(256).length };
+  return { structCfg: (id) => engine.structCfg(id), biomeExists: (id) => engine.biomeExists(id), overworldBiomeCount: ow, maxStrongholds: engine.strongholds(256).length, heightsOk: engine.heights(0, 0, 2, 2) !== null };
 }

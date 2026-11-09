@@ -2,6 +2,7 @@
 import { h, fmtInt, fmtNum, fmtTime, parseSeed, seedToString, softRender } from './utilities.js';
 import { state, collectLeaves, validateRules, defaultRules } from './app-state.js';
 import { EDITIONS, VERSIONS, VERSION_NOTICE, versionById } from './minecraft-versions.js';
+import { EXTRA_VERSIONS, LEVELS, extraByTag } from './version-support.js';
 import { SEARCH_MODES, PERFORMANCE_PROFILES, ACCENTS, UI_SIZES, WASM_FILES } from './configuration.js';
 import { WasmEngine } from './wasm-engine.js';
 import { detectCpu, planWorkers } from './cpu-engine.js';
@@ -36,6 +37,8 @@ const info = {
 };
 
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 3000); }
+const vLabel = (id = state.versionId, tag = state.versionTag) => (tag ? extraByTag(tag).label : versionById(id).label);
+const vWarnings = (tag = state.versionTag) => { const x = tag && extraByTag(tag); return x ? [`Versión ${x.tag}: ${LEVELS[x.level]}. ${x.summary}`, ...x.differences.map((d) => 'Diferencia conocida: ' + d), ...x.unverified.map((d) => 'Sin verificar: ' + d)] : []; };
 const btnContent = (name, label) => [icon(name, 18), h('span', { class: 'lbl', text: label })];
 
 // ---------- control de busqueda ----------
@@ -69,7 +72,7 @@ async function startSearch() {
     const rulesJson = cleanRules(), compiled = compileRules(cleanRules());
     for (const l of compiled.leaves) {
       const ids = l.cond === 'structure' ? [l.struct] : l.cond === 'structureNear' ? [l.typeA, l.typeB] : [];
-      for (const id of ids) if (!info.structAvailable(id)) throw new Error(`«${structById(id).label}» no existe en ${versionById(state.versionId).label}.`);
+      for (const id of ids) if (!info.structAvailable(id)) throw new Error(`«${structById(id).label}» no existe en ${vLabel()}.`);
     }
     const domain = buildDomain(), plan = planWorkers(state.profile, state.workersOverride, cpu);
     infoEngine.setup(state.versionId, state.large);
@@ -77,9 +80,10 @@ async function startSearch() {
     openAnalysis({
       rules: rulesJson, compiled, info: engineInfo(infoEngine), plan, cpu, gpu, base, tiers: state.tiers,
       defaults: { count: domain.kind === 'random' ? domain.count : 0, maxMatches: Number(state.maxMatches) || 0, name: state.searchName },
-      summary: { version: `${EDITIONS.find((e) => e.id === state.edition).label} · ${versionById(state.versionId).label}${state.large ? ' · biomas gigantes' : ''}`, mode: SEARCH_MODES[state.mode].label,
+      summary: { version: `${EDITIONS.find((e) => e.id === state.edition).label} · ${vLabel()}${state.large ? ' · biomas gigantes' : ''}`, mode: SEARCH_MODES[state.mode].label,
         domain: domain.kind === 'random' ? 'semillas aleatorias' : domain.kind === 'range' ? `intervalo [${domain.start}, ${domain.end}]` : `lista de ${domain.list.length} semillas`,
         leaves: collectLeaves(state.rules).filter((l) => l.enabled !== false).map((l) => describeLeaf(l) + (l.optional ? ' (opcional)' : '')) },
+      extraWarnings: vWarnings(),
       onModify: () => switchTab('rules'),
       onStart: (choice, analysis) => launch({ choice, analysis, compiled, rulesJson, domain, plan }),
     });
@@ -91,7 +95,7 @@ async function launch({ choice, analysis, compiled, rulesJson, domain, plan }) {
   try {
     state.matches = []; state.selected.clear(); open.clear(); seen.clear(); state.searchSnapshot = null; state.searchName = choice.name; checkpointInfo = null;
     const dom = domain.kind === 'random' ? { kind: 'random', count: choice.maxSeeds || 0 } : domain;
-    state.lastRun = { versionId: state.versionId, versionLabel: versionById(state.versionId).label, mode: state.mode, domain: dom, name: choice.name, choice, pre: { est: analysis.est, tier: analysis.tier, verdict: analysis.verdict, source: analysis.source },
+    state.lastRun = { versionId: state.versionId, versionLabel: vLabel(), versionTag: state.versionTag, mode: state.mode, domain: dom, name: choice.name, choice, pre: { est: analysis.est, tier: analysis.tier, verdict: analysis.verdict, source: analysis.source },
       leaves: compiled.leaves.map((l) => { const c = { ...l }; delete c._set; return c; }), plan };
     const hasLimit = domain.kind === 'random' && choice.maxSeeds;
     const turbo = state.turbo ? { slack: Math.max(0, Number(state.turboSlack) || TURBO_DEFAULT_SLACK) } : null;
@@ -187,7 +191,7 @@ function renderAll() { switchTab(currentTab); }
 const uiCtx = {
   toast, open, seen, goto: switchTab, clearResults, refreshAll: () => renderAll(),
   openMap: (seed) => { state.mapSeed = String(seed); switchTab('map'); },
-  exportCtx: () => ({ edition: EDITIONS.find((e) => e.id === state.edition).label, versionLabel: versionById(state.lastRun?.versionId ?? state.versionId).label, modeLabel: SEARCH_MODES[state.lastRun?.mode ?? state.mode].label, leaves: state.lastRun?.leaves || [] }),
+  exportCtx: () => ({ edition: EDITIONS.find((e) => e.id === state.edition).label, versionLabel: state.lastRun ? state.lastRun.versionLabel : vLabel(), versionWarnings: vWarnings(state.lastRun ? state.lastRun.versionTag : state.versionTag), modeLabel: SEARCH_MODES[state.lastRun?.mode ?? state.mode].label, leaves: state.lastRun?.leaves || [] }),
 };
 
 // ---------- Turbo ----------
@@ -217,7 +221,8 @@ function renderSearch() {
   drawDom();
   root.append(
     h('div', { class: 'card' }, h('h2', { text: 'Versión y edición' }),
-      h('p', { text: `${ed.label} · ${versionById(state.versionId).label}` }),
+      h('p', { text: `${ed.label} · ${vLabel()}` }),
+      ...vWarnings().map((t) => h('div', { class: 'notice warn', text: t })),
       h('div', { class: 'notice' }, VERSION_NOTICE),
       h('div', { class: 'notice warn' }, EDITIONS.find((e) => !e.enabled).reason),
       h('div', { class: 'notice warn' }, 'El spawn es una ESTIMACIÓN de Cubiomes: el spawn real depende de bloques de hierba y puede diferir. Las condiciones «desde el spawn» usan ese punto estimado.'),
@@ -316,7 +321,7 @@ function renderSettings() {
         'Seeds, resultados, análisis, filtros y datos de hardware viven solo en memoria y desaparecen al cerrar o recargar.',
         'Solo conservas una seed si pulsas «Descargar TXT». La política CSP de la página bloquea conexiones a otros orígenes.'].map((t) => h('li', { text: t })))),
     h('div', { class: 'card' }, h('h2', { text: 'Límites y funciones pendientes (sin simular)' }), h('ul', {}, [
-      VERSION_NOTICE, EDITIONS.find((e) => !e.enabled).reason, LOOT.reason, COLLISION_LEVELS.piezas.reason,
+      VERSION_NOTICE, 'Versiones 26.1/26.2/26.3: se sirven con el motor 1.21 Winter Drop y se marcan como equivalentes en datos o aproximadas; ver version-support.js y check-version-data.py. Dappled Forest y Abandoned Camps (26.3) NO están en el motor.', EDITIONS.find((e) => !e.enabled).reason, LOOT.reason, COLLISION_LEVELS.piezas.reason,
       'GPU: WebGPU solo se detecta; la generación de mundo se ejecuta en CPU/WebAssembly.',
       'Las categorías de rareza son propias de SeedHunter y configurables; no son una clasificación oficial de Minecraft. Mojang no publica probabilidades de semillas.',
       'Estructuras: se calculan posiciones de inicio (con comprobación de bioma). El terreno solo se aproxima en Desert Pyramid, Jungle Temple y Mansion (1.18+).',
@@ -348,9 +353,9 @@ async function init() {
   $('btn-start').replaceChildren(...btnContent('play', 'Iniciar')); $('btn-pause').replaceChildren(...btnContent('pause', 'Pausar')); $('btn-resume').replaceChildren(...btnContent('play', 'Reanudar'));
   $('btn-cancel').replaceChildren(...btnContent('stop', 'Cancelar')); $('btn-restart').replaceChildren(...btnContent('restart', 'Reiniciar'));
   $('cb-edition').replaceChildren(...EDITIONS.map((e) => h('option', { value: e.id, text: e.label + (e.enabled ? '' : ' (no disponible)'), disabled: !e.enabled })));
-  $('cb-version').replaceChildren(...VERSIONS.map((v) => h('option', { value: v.id, text: v.label, selected: v.id === state.versionId })));
+  $('cb-version').replaceChildren(...EXTRA_VERSIONS.slice().reverse().map((v) => h('option', { value: 'tag:' + v.tag, text: v.label })), ...VERSIONS.map((v) => h('option', { value: v.id, text: v.label, selected: v.id === state.versionId })));
   $('cb-mode').replaceChildren(...Object.entries(SEARCH_MODES).map(([k, m]) => h('option', { value: k, text: m.label, selected: k === state.mode })));
-  $('cb-version').addEventListener('change', (e) => { state.versionId = Number(e.target.value); info.setVersion(state.versionId); renderAll(); });
+  $('cb-version').addEventListener('change', (e) => { const val = e.target.value, x = val.startsWith('tag:') ? extraByTag(val.slice(4)) : null; state.versionTag = x ? x.tag : null; state.versionId = x ? VERSIONS.find((v) => v.key === x.engineKey).id : Number(val); info.setVersion(state.versionId); renderAll(); });
   $('cb-mode').addEventListener('change', (e) => { state.mode = e.target.value; renderAll(); });
   $('btn-start').addEventListener('click', startSearch);
   $('btn-pause').addEventListener('click', () => controller.pause());

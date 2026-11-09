@@ -159,7 +159,8 @@ export function openAnalysis(o) {
       h('label', { class: 'field' }, h('span', { text: 'Calidad del análisis' }), sel([['fast', 'Rápido (3 s)'], ['normal', 'Normal (8 s)'], ['deep', 'Profundo (20 s)']], S.quality, (v) => { S.quality = v; })),
       h('button', { class: 'btn small', text: 'Volver a medir', on: { click: () => analyze() } })),
       h('div', { class: 'muted small-text', text: `${o.summary.version} · modo ${o.summary.mode} · ${o.summary.domain}` }),
-      h('ul', { class: 'warnlist' }, o.summary.leaves.map((t) => h('li', { text: t }))));
+      h('ul', { class: 'warnlist' }, o.summary.leaves.map((t) => h('li', { text: t }))),
+      ...(o.extraWarnings || []).map((t) => h('div', { class: 'notice warn small-text', text: t })));
 
     body.replaceChildren(head, h('div', { class: 'cards' }, rareCard, vCard, dCard), bCard, okCard, stCard, h('div', { class: 'cards', style: 'margin-top:12px' }, exCard, wCard));
 

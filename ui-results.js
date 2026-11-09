@@ -24,6 +24,8 @@ function leafSummary(card) {
     const r = x.result; if (!r || !r.pass) continue;
     if (x.leaf.cond === 'structure' || x.leaf.cond === 'stronghold') { const s = x.leaf.cond === 'stronghold' ? 'Fortaleza' : structById(x.leaf.struct)?.label.split(' (')[0]; parts.push(`${r.detail.count}× ${s} (más cercana ${fmtInt(r.detail.found?.[0]?.d)})`); }
     else if (x.leaf.cond === 'structureNear' && r.detail.pair) parts.push(`${structById(x.leaf.typeA).label.split(' (')[0]} ↔ ${structById(x.leaf.typeB).label.split(' (')[0]}: ${fmtInt(r.detail.pair.d)}`);
+    else if (x.leaf.cond === 'spawnLandform') parts.push(`forma: ${({ island: 'isla', continent: 'continente', peninsula: 'península', other: 'tierra cerrada grande', water: 'agua' })[r.detail.form] || r.detail.form}`);
+    else if (x.leaf.cond === 'spawnTerrain' && r.detail.range !== undefined) parts.push(`relieve ${r.detail.range.toFixed(1)}, altura media ${r.detail.mean.toFixed(0)}`);
     else if (x.leaf.cond === 'biomeDiversity') parts.push(`${r.detail.distinct} biomas`);
     else if (x.leaf.cond === 'biomeArea') parts.push(`biomas ${r.detail.pct.toFixed(1)} %`);
   }

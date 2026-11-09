@@ -64,6 +64,8 @@ export function describeLeaf(l) {
   switch (l.cond) {
     case 'spawnBiome': return `Spawn en ${(l.biomes || []).map(biomeName).join(' / ')}`;
     case 'biomeArea': return `${l.match === 'all' ? 'Todos los biomas' : 'Algún bioma'} de [${(l.biomes || []).map(biomeName).join(', ')}] a ≤ ${fmtInt(l.radius)} bloques ${c}${l.minPct ? ` (≥ ${l.minPct} % del área)` : ''}`;
+    case 'spawnLandform': return `${c.startsWith('del origen') ? 'Origen' : 'Spawn'} en ${{ island: 'una isla', continent: 'un continente', peninsula: 'una península' }[l.form]} (estimación por muestreo, ventana de ${fmtInt(l.scanRadius)} bloques)`;
+    case 'spawnTerrain': return `Terreno ${c} a ≤ ${fmtInt(l.radius)} bloques${l.maxRange != null ? `: relieve ≤ ${l.maxRange} bloques` : ''}${l.minHeight != null ? `, altura media ≥ ${l.minHeight}` : ''}${l.maxHeight != null ? `, altura media ≤ ${l.maxHeight}` : ''} (altura aproximada)`;
     case 'biomeDiversity': return `≥ ${l.minDistinct} biomas distintos en ${fmtInt(l.radius)} bloques ${c}`;
     case 'structure': return `${l.minCount ?? 1}${l.maxCount != null ? '–' + l.maxCount : '+'} × ${structById(l.struct)?.label ?? l.struct} a ${l.minDist ? fmtInt(l.minDist) + '–' : '≤ '}${fmtInt(l.radius)} bloques ${c}`;
     case 'stronghold': return `≥ ${l.minCount ?? 1} fortaleza(s) a ≤ ${fmtInt(l.radius)} bloques ${c}`;

@@ -1,13 +1,13 @@
 {
   "name": "seedhunter-jimx",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Buscador, analizador y clasificador de semillas de Minecraft (Java) con Rareza Hunter. Todo local, sin datos de usuario.",
   "type": "module",
   "license": "MIT",
   "private": true,
   "scripts": {
     "serve": "python3 -m http.server 8080",
-    "test": "node tests.js && node tests-viability.js",
+    "test": "node tests.js && node tests-viability.js && node tests-extension.js",
     "build:wasm": "bash build-wasm.sh",
     "build:data": "python3 generate-data.py"
   },

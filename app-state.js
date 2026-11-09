@@ -7,6 +7,7 @@ import { uid } from './utilities.js';
 export const state = {
   edition: 'java',
   versionId: DEFAULT_VERSION.id,
+  versionTag: null,       // '26.1' / '26.2' / '26.3' = version posterior servida por el motor 1.21 WD (ver version-support.js)
   large: false,
   mode: 'normal',
   domain: { kind: 'random', count: '', start: '0', end: '99999', list: '' },
@@ -37,6 +38,8 @@ export function newLeaf(cond, extra = {}) {
     spawnBiome: { biomes: [] },
     biomeArea: { biomes: [], match: 'any', radius: 400, minPct: 0 },
     biomeDiversity: { minDistinct: 8, radius: 500 },
+    spawnLandform: { form: 'island', scanRadius: 1500, maxIslandArea: 1000000, peninsulaRadius: 400, minWaterFrac: 0.35 },
+    spawnTerrain: { radius: 32, maxRange: 6, minHeight: null, maxHeight: null },
     structure: { struct: structByKey('Village').id, minCount: 1, maxCount: null, radius: 800, minDist: 0 },
     stronghold: { minCount: 1, radius: 1500 },
     structureNear: { typeA: structByKey('Mansion').id, typeB: structByKey('Ancient_City').id, radius: 1500, maxDist: 300 },
@@ -70,6 +73,7 @@ export function validateRules(root) {
   if (!leaves.length) errs.push('Añade al menos una condición activa.');
   for (const l of leaves) {
     if ((l.cond === 'spawnBiome' || l.cond === 'biomeArea') && !l.biomes.length) errs.push('Una condición de bioma no tiene biomas seleccionados.');
+    if (l.cond === 'spawnLandform' && !(l.scanRadius > 0)) errs.push('La ventana de análisis debe ser mayor que 0.');
     if (l.radius !== undefined && !(l.radius > 0)) errs.push('Un radio debe ser mayor que 0.');
     if (l.cond === 'structureNear' && !(l.maxDist > 0)) errs.push('La distancia máxima entre estructuras debe ser mayor que 0.');
   }

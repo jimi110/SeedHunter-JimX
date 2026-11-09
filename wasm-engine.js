@@ -38,6 +38,15 @@ export class WasmEngine {
     } finally { this.x.sh_free(p); }
   }
 
+  /** Altura aproximada (Cubiomes) en una rejilla w*h de paso 4 bloques desde (x4,z4)*4. null si la version/dimension no lo soporta (solo Overworld 1.18+). */
+  heights(x4, z4, w, h) {
+    const n = w * h, py = this.x.sh_alloc(n * 4), pi = this.x.sh_alloc(n * 4);
+    try {
+      if (this.x.sh_height(x4, z4, w, h, py, pi) !== 0) return null;
+      return { y: new Float32Array(this.x.memory.buffer.slice(py, py + n * 4)), ids: new Int32Array(this.x.memory.buffer.slice(pi, pi + n * 4)) };
+    } finally { this.x.sh_free(py); this.x.sh_free(pi); }
+  }
+
   /** Configuracion de estructura en la version actual, o null si no existe. */
   structCfg(type) {
     if (!this.x.sh_struct_cfg(type, this.scratch, this.scratchF)) return null;
